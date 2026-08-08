@@ -3,6 +3,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[english]{babel}
+\usepackage{amsmath} % numbered equations in the differential-privacy section
 \usepackage{natbib}
 \usepackage{url} % verbatim-safe \url{} for bibliography URLs (underscores, etc.)
 
@@ -13,6 +14,12 @@
 \begin{document}
 
 \maketitle
+
+\tableofcontents
+
+% Background is Chapter 2 per the planning document. Until 01_introduction
+% exists, force the counter so the numbering matches the outline.
+\setcounter{chapter}{1}
 
 \input{02_background}
 
