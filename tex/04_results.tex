@@ -1,0 +1,63 @@
+\chapter{Results and Evaluation}
+\label{ch:results}
+
+\section{Methodological premise}
+\label{sec:results-premise}
+
+Neither repository publishes a quantitative accuracy benchmark. \texttt{dometria-bulk-insert} reports no measured extraction accuracy against a labeled test set, and ColdRAG reports no Recall, NDCG, hit-rate, or other recommendation-quality metric (\S\ref{sec:cf-content-hybrid}). This chapter does not manufacture either. It instead surveys the evaluation instruments each system was built with, reports what they measure and what they have shown when run, and is explicit throughout about the difference between an instrument that exists and a result that has been obtained with it. \S\ref{sec:results-limitations} returns to this premise directly, since the absence itself is a finding, not a gap in reporting.
+
+\section{dometria-bulk-insert}
+\label{sec:results-bulk-insert}
+
+\subsection{Evaluation tooling}
+\label{sec:results-bulk-insert-tooling}
+
+Two scripts instrument the extraction pipeline of \S\ref{sec:bulk-insert-block3}, and they measure different things. \texttt{scripts/eval\_extraction.py} evaluates a single run at the field level: for each extracted field it records whether a value was produced, whether that value carried a quote, and whether the value fell into one of the abstention or out-of-vocabulary states of \S\ref{sec:bulk-insert-normalization}. Aggregated across a document's fields, this yields the out-of-vocabulary-rate signal already introduced in \S\ref{sec:bulk-insert-normalization} — the proportion of populated fields that a closed vocabulary could not represent, which flags a vocabulary that has drifted from the documents it is meant to cover.
+
+\texttt{scripts/measure\_variance.py} instead runs the same document through the pipeline $N$ times and compares the results, separating variance into two levels that the pipeline can fail at independently. \emph{Schema-level agreement} asks whether Block~2 (\S\ref{sec:bulk-insert-block2}) selects the same contract on every run — a flip here changes which field set is even extracted, and is the more disruptive failure. \emph{Field-level value drift} asks, given a fixed contract, how much an individual field's extracted value varies across runs. The distinction matters because the two are not equally consequential: a schema flip invalidates the entire record, while value drift on one field leaves the rest intact. Separating them is what makes the non-determinism of \S\ref{sec:llm-limitations} — repeated calls to the same LLM are not guaranteed to return identical output even at zero temperature \citep{he2025defeating} — an observable, localized property of this specific pipeline rather than an unmeasured background risk.
+
+Both scripts operate on runs the pipeline actually produces; neither presupposes or requires ground-truth labels. This is consistent with the absence noted in \S\ref{sec:results-premise}: the tooling measures self-consistency and vocabulary coverage, not accuracy against a reference.
+
+\subsection{Quality gates}
+\label{sec:results-bulk-insert-quality-gates}
+
+Independently of the runtime evaluation tooling, every commit is checked by a fixed gate run through \texttt{pre-commit}: \texttt{ruff} for linting, \texttt{mypy --strict} for static type checking, and \texttt{pytest} for the test suite. The suite mocks the Instructor client for its unit tests, so most of it runs without network access or an API key; a smaller set of integration tests is gated behind a \texttt{-m integration} marker and requires \texttt{OPENROUTER\_API\_KEY} to exercise the pipeline against a live model. This gate is a code-correctness check — it establishes that the pipeline runs and that its types are internally consistent — and is a different kind of evidence from the field- and schema-level instrumentation of \S\ref{sec:results-bulk-insert-tooling}, which characterizes what the pipeline outputs rather than whether it runs.
+
+\subsection{Illustrative response values}
+\label{sec:results-bulk-insert-illustrative}
+
+The service's own mission documentation gives \texttt{confidence: 0.82} and \texttt{completeness: 0.75} as example values in a sample response. These are illustrative: they demonstrate the shape and range of the response schema described in \S\ref{sec:bulk-insert-api}, not an aggregate measurement obtained by running the pipeline over a test corpus. No corpus-level average of either score is reported anywhere in the specification, and this thesis does not construct one.
+
+\section{ColdRAG}
+\label{sec:results-coldrag}
+
+\subsection{Performance instrumentation}
+\label{sec:results-coldrag-tracker}
+
+The \texttt{PerformanceTracker} introduced in \S\ref{sec:coldrag-stack} (\texttt{metrics.py}) instruments a request end to end: wall-clock latency, an estimated token count obtained from a length-based heuristic (character count divided by four, rather than a model-specific tokenizer, so the figure is an approximation in the sense of \S\ref{sec:transformer} rather than an exact count), an estimated dollar cost derived from the configurable per-million-token input/output pricing already given in \S\ref{sec:coldrag-stack} (\$0.30 in / \$2.50 out by default), and throughput in tokens per second. A per-item latency is tracked alongside the aggregate figures where a request processes more than one item. At the end of a run, \texttt{print\_report()} emits a human-readable summary and returns a structured record — \texttt{\{elapsed\_time, total\_tokens\_estimated, cost\_dollars, tps\}} — so the same measurement is available both for inspection during development and for programmatic collection.
+
+This instrumentation measures cost and latency, not output quality: it establishes what a request costs to run, not whether the candidates it returns are the right ones. It is the infrastructural counterpart to the accuracy figures \S\ref{sec:results-premise} notes are absent, and the two are not substitutes for each other.
+
+\subsection{Test suite}
+\label{sec:results-coldrag-tests}
+
+ColdRAG's Pytest suite (\texttt{tests/}, run via \texttt{uv run pytest tests/ -v}) covers two areas. \texttt{test\_models.py} exercises the Pydantic layer directly: the taxonomy-driven \texttt{RuleParser} of \S\ref{sec:coldrag-hitl}, the structure of the final confirmed payload, and deterministic product-identifier generation (\S\ref{sec:coldrag-ingestion}) — that hashing the same text twice yields the same identifier is a testable property, not only an architectural claim. \texttt{test\_workflow.py} exercises the conversational module's event-driven control flow (\S\ref{sec:coldrag-hitl}): event transitions between workflow steps and session TTL behavior in Redis. As with the bulk-insert quality gate of \S\ref{sec:results-bulk-insert-quality-gates}, this suite verifies that the system behaves as specified; it does not measure retrieval or matching quality.
+
+\subsection{An illustrative end-to-end run}
+\label{sec:results-coldrag-run}
+
+One infrastructural run is reported in the system's documentation as an example of \texttt{PerformanceTracker} output: 17.50~s elapsed, 5 items processed, approximately 1{,}200 tokens, an estimated cost of \$0.00102, a throughput of 68.57 tokens per second, and 3.50~s per item. As with the confidence and completeness values of \S\ref{sec:results-bulk-insert-illustrative}, this is a single sample presented to show what the instrumentation reports, not a benchmark result: no distribution over multiple runs or query types is given, and no claim of representativeness is made for it here.
+
+\section{Comparative synthesis and limits of the current evaluation}
+\label{sec:results-synthesis}
+
+The two systems are evaluated by parallel but non-identical means. Both are checked by a pre-commit-gated test suite establishing code correctness, and both carry runtime instrumentation reporting on their own execution — variance and vocabulary coverage for \texttt{dometria-bulk-insert}, latency and cost for ColdRAG. Neither instrument set measures the same thing across the two systems, because the systems address different problems: an extraction service is evaluated against how faithfully and consistently it transcribes a known document, while a retrieval system is evaluated against how well it ranks candidates against a query, a task for which no held-out relevance judgments exist here at all.
+
+The two are complementary, not equivalent. Test suites answer \emph{does the system run correctly}; variance measurement answers \emph{is a given output stable across repetitions}; cost and latency tracking answers \emph{what does a request cost}. None of the three answers \emph{is the output correct}, and neither system's tooling was built to answer that question directly. Reproducibility instrumentation is, on its own terms, a substitute for correctness only up to a point: consistent output across runs (measured by \texttt{measure\_variance.py}, \S\ref{sec:results-bulk-insert-tooling}) rules out a specific failure mode — instability — without establishing that the stable value is the right one.
+
+\section{Absence of formal benchmarks as a recognized limitation}
+\label{sec:results-limitations}
+
+No component of either system is evaluated here against a held-out, labeled ground truth. For \texttt{dometria-bulk-insert} this would mean field-level accuracy against manually annotated documents; for ColdRAG it would mean a ranking metric such as Recall@$k$ or NDCG (\S\ref{sec:cf-content-hybrid}) against known correct matches, evaluated with the kind of reference-free or reference-based RAG evaluation frameworks surveyed in \S\ref{sec:rag} \citep{es2024ragas,chen2024benchmarking}. Neither exists for either system at the time of writing, and this thesis does not attempt to construct one post hoc: doing so without a properly constructed reference set and annotation protocol would produce a number without the validity a benchmark claim requires.
+
+This is recorded here as a limitation of the evaluation presented, not of the systems themselves, and it is treated as a direction for future work in Chapter~\ref{ch:conclusions} rather than as an omission from this chapter. What the chapter does establish is narrower and load-bearing in its own right: both systems run, are exercised by an automated test suite on every change, expose evaluation and instrumentation tooling purpose-built for the failure modes their own architecture makes possible — non-determinism and vocabulary drift for one, cost and latency for the other — and neither has been evaluated, here or in its own documentation, against a formal accuracy benchmark.
