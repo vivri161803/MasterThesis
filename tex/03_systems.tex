@@ -1,0 +1,150 @@
+\chapter{Systems Developed}
+\label{ch:systems}
+
+This chapter describes what was built. It assumes the concepts and prior work of Chapter~\ref{ch:background} and does not restate them; every non-obvious design choice is instead traced back to the section of Chapter~\ref{ch:background} that motivates it. The chapter covers two systems built at Dometria AI. \S\ref{sec:shared-stack} and \S\ref{sec:evidence-grounded-principle} state what the two systems share. \S\ref{sec:bulk-insert} describes \texttt{dometria-bulk-insert}, a stateless extraction microservice that turns heterogeneous real-estate documents into structured, evidence-grounded asset records. \S\ref{sec:coldrag-system} describes ColdRAG, the graph-augmented retrieval system that matches those records under item cold-start.
+
+\section{Common Overview}
+\label{sec:shared-overview}
+
+\subsection{Shared stack}
+\label{sec:shared-stack}
+
+Both systems are Python~3.13 services managed with \texttt{uv} for dependency resolution and packaging \citep{astral2026uv}, exposed over FastAPI \citep{ramirez2026fastapi}. Both reach every LLM through OpenRouter, an OpenAI-compatible gateway that fronts multiple providers behind one API \citep{openrouter2026openrouter}; this is what lets the choice of model (\S\ref{sec:instruction-tuning}) be a configuration value rather than a binding to one vendor, and lets a service fail over to a different model on the same call path without a code change. Both obtain structured, schema-conformant output from every LLM call via Instructor layered on Pydantic (\S\ref{sec:structured-output}) \citep{liu2026instructor,colvin2026pydantic}: a Pydantic model declares the expected fields once, Instructor validates the returned payload against it, and a validation failure triggers an automatic retry rather than propagating a malformed result.
+
+\subsection{Shared methodological principle: evidence-grounded extraction}
+\label{sec:evidence-grounded-principle}
+
+Both systems apply the same response to the hallucination risk of \S\ref{sec:llm-limitations}: an LLM is asked to transcribe evidence from its input, never to compute or infer a final value directly, and any value that requires computation or cross-referencing is derived afterwards in ordinary code from what was transcribed. This thesis refers to the principle as \emph{transcribe-then-derive}. In \texttt{dometria-bulk-insert} it takes its most explicit form: every extracted field is paired with a verbatim quote from the source document (\S\ref{sec:bulk-insert-block3}), and arithmetic or cross-field values are never asked of the model at all (\S\ref{sec:bulk-insert-block3}). The same principle recurs at a coarser grain in ColdRAG's governance layer, which accepts or rejects a proposed graph edge against the text that produced it rather than against the model's own confidence (\S\ref{sec:coldrag-ingestion}), and in its count/aggregate mechanism, which computes a total in code from a transcribed list rather than asking the model to count (\S\ref{sec:bulk-insert-normalization}). Structurally, the principle is an application of entailment gating (\S\ref{sec:llm-as-judge}) at the point of generation instead of after it.
+
+\section{Part A --- \texttt{dometria-bulk-insert}}
+\label{sec:bulk-insert}
+
+\texttt{dometria-bulk-insert} is a stateless synchronous extraction microservice. It takes one document and returns one structured asset record: a request carries an identifier and a text; the response carries a fully populated asset object, a confidence score, a completeness score, and the model identifiers used to produce it. The service holds no persistent state of its own — nothing survives one request to the next in the same process — so scaling is horizontal: more replicas behind a load balancer, not more concurrency inside one process. This design choice is examined in \S\ref{sec:bulk-insert-api}.
+
+\subsection{Interface and service contract}
+\label{sec:bulk-insert-api}
+
+The service exposes a single synchronous endpoint, \texttt{POST /process}, taking \texttt{\{id, text\}} and returning \texttt{\{id, asset, confidence, completeness, \_models\}}. The \texttt{asset} object carries the contract identifier matched in \S\ref{sec:bulk-insert-block2}, the extracted \texttt{data}, per-field \texttt{evidence} quotes, a \texttt{flags} list recording agreement, grounding, and normalization notes, and a \texttt{review\_queue} listing any mandatory field that could not be filled. A \texttt{200} response is not a claim that the record is complete: low confidence together with a non-empty review queue is an expected outcome, not an error condition, and is left for a human reviewer to resolve rather than surfaced as a failure. \texttt{GET /health} reports liveness unconditionally; \texttt{GET /ready} returns \texttt{503} until spaCy, the embedding model, and the offline artifacts described in \S\ref{sec:bulk-insert-block3} have finished loading. \texttt{GET /config/models} and \texttt{POST /config/model} allow a runtime, per-replica override of the lightweight and heavy model identifiers, gated by a feature flag; the embedding model is excluded from this override because it is baked into the container image (\S\ref{sec:bulk-insert-containerization}), not fetched at request time.
+
+Errors are reported through a single \texttt{PipelineError\{stage, category, message\}} envelope, with category mapped to an HTTP status: \texttt{bad\_input} (whitespace-only text) to \texttt{400}; \texttt{unprocessable} (no contract scores above the matching threshold in \S\ref{sec:bulk-insert-block2}) to \texttt{422}; \texttt{retryable} (a transient upstream failure, safe to resubmit) to \texttt{502}; and \texttt{server} (a missing or malformed schema, or any uncaught exception) to \texttt{500}. FastAPI's own request-validation errors — an empty string failing a \texttt{min\_length=1} constraint, for instance — are distinct from this envelope and retain FastAPI's default error body.
+
+The endpoint handler is a synchronous \texttt{def}, not an \texttt{async def}, and this is a deliberate architectural choice rather than an oversight. The service's dominant work — Instructor calls, spaCy segmentation, sentence-transformer inference — is blocking, CPU- or I/O-bound code that does not yield control back to an event loop. Running it in a synchronous handler lets FastAPI dispatch it to its internal thread pool automatically, keeping the event loop free, at the cost of a per-container concurrency ceiling. The original design took the opposite approach: an asynchronous pipeline built on Celery, Redis, and PostgreSQL, returning \texttt{202 Accepted} and requiring the caller to poll for a result. This was abandoned on 2026-06-25 in favor of the synchronous, stateless design described here, following the twelve-factor principle that a service should treat its own concurrency as a property of how many stateless, disposable processes are run, not of what happens inside one \citep{wiggins2011twelve,fowler2014microservices,newman2015building}: queueing, retrying, and parallelizing requests is delegated entirely to the deployment platform (more replicas, a load balancer), and the service itself carries no broker, no worker, and no database.
+
+\subsection{Block 1 --- Preprocessing}
+\label{sec:bulk-insert-block1}
+
+The first stage segments the input document into sentences with spaCy, using a blank pipeline with only the rule-based sentencizer enabled and no downloaded language model \citep{honnibal2026spacy}; segmentation is the only role spaCy plays. A sliding window then groups sentences into overlapping chunks, so that context spanning a chunk boundary is not lost to a hard cut. Each chunk is passed once to the lightweight LLM in a single Instructor call that returns a \texttt{ChunkAnalysis} object combining two outputs that would otherwise require two calls: a relevance score on a 1--10 scale, and the chunk's text with coreferring expressions resolved. Coreference resolution is folded into this call rather than handled by a dedicated library, because no coreference-resolution package supporting Python~3.13 and spaCy~3.8 was available at implementation time; an LLM prompted for the task in the same pass as relevance scoring stands in for it (\S\ref{sec:ned}).
+
+\subsection{Block 2 --- Contract Determination}
+\label{sec:bulk-insert-block2}
+
+Contract matching proceeds in two stages against a fixed, three-level category tree of 97 leaf contracts, spanning 3 root macro-categories and 12 intermediate categories. The first stage is a single constrained call to the lightweight LLM that selects one of the 3 root macro-categories. The second stage selects the (level-2, level-3) leaf: chunk embeddings, computed with the multilingual, distilled sentence-embedding model \texttt{paraphrase-multilingual-MiniLM-L12-v2} (384-dimensional; \S\ref{sec:embedding-models}) \citep{reimers2026sentence}, are compared by cosine similarity against the candidate leaf labels' embeddings, each chunk's contribution weighted by the relevance score Block~1 assigned it, and the leaf is chosen by majority vote over chunks. The tree itself — root, intermediate, and leaf categories, and the ancestry between them — is a plain nested dictionary traversed at lookup time. An earlier design used a dedicated knowledge-graph engine for this matching step; it was removed as disproportionate to a fixed, shallow, three-level structure that a nested-dictionary lookup expresses directly, and no traversal beyond ancestor/descendant lookup was ever required of it.
+
+\subsection{Block 3 --- Asset Extraction}
+\label{sec:bulk-insert-block3}
+
+Asset extraction is tree-driven and evidence-grounded. Offline, a one-time ingest step unions the fields of all 97 contracts into a static \texttt{field\_tree.json} and a \texttt{product\_manifests.json}; this artifact is built once and read at every request, not recomputed per document. At request time, the (level-1, level-2, level-3) path Block~2 selected determines which fields apply to this product, and \texttt{pydantic.create\_model} constructs a Pydantic model for exactly that field set. Every field in the generated model is paired with a companion \texttt{\{field\}\_quote} field, and every closed-vocabulary field carries an explicit abstention value, \texttt{NOT\_PRESENT}, so that a field the document genuinely does not address has a distinct, correct answer rather than forcing a guess among listed values (\S\ref{sec:structured-output}). A model validator enforces the transcribe-then-derive principle mechanically: any field populated with a non-abstaining value but lacking a matching quote fails validation and triggers an Instructor retry, so the model cannot both keep a value and omit its evidence.
+
+Fields are partitioned by a \texttt{topic} tag and extracted in one sequential pass per topic group, not fanned out concurrently; this is consistent with the synchronous, threadpool-based service design of \S\ref{sec:bulk-insert-api}, where per-request concurrency is not assumed. A separate \texttt{priority} tag, orthogonal to topic, determines which groups receive self-consistency voting (\S\ref{sec:self-consistency}): mandatory and high-priority groups are sampled \texttt{SELF\_CONSISTENCY\_N} times and resolved by majority vote, while lower-priority groups are extracted once. There is no workflow or dependency-graph engine coordinating this process: partitioning by topic stands in for dependency ordering, and selecting only the fields that apply to the matched product stands in for conditional branching.
+
+Finally, values that require computation rather than transcription are never requested from the extraction model. Arithmetic and cross-field values are computed in Python from already-transcribed primitives (\texttt{computed} fields); a small number of fields that genuinely require reasoning over already-extracted content (\texttt{judged} fields) are resolved with an isolated second LLM call that receives only the relevant primitives and their quotes, never the source document. Field metadata — enum vocabularies, descriptions, topics, priorities, and derivation rules — lives in an editable \texttt{field\_metadata.yaml} sidecar populated offline (\S\ref{sec:bulk-insert-metadata-compile}); a field not yet compiled is treated as free text pending compilation.
+
+\subsection{Post-extraction record finishing}
+\label{sec:bulk-insert-normalization}
+
+A deterministic normalization stage runs after extraction, with no LLM involved: a type-driven registry converts dates to ISO~8601, Italian-formatted numeric strings to \texttt{float} or \texttt{int}, and tidies free text, cleaning values in place without fabricating any it cannot parse — an unparseable value is kept and flagged rather than dropped or guessed. This stage is switchable via \texttt{NORMALIZE\_ENABLED}.
+
+A second, opt-in stage resolves a third enum sentinel, \texttt{OUT\_OF\_VOCAB}, distinct from \texttt{NOT\_PRESENT}: it marks a field where the document states a value but no listed vocabulary entry fits, and it always carries a quote. A scoped LLM judge, given only the field's description and its own quote — never the source document — either remaps the value to a listed option or emits a faithful free-text value. The rate at which this sentinel fires is surfaced as an out-of-vocabulary-rate signal in the evaluation tooling of Chapter~\ref{ch:results}. This stage is switchable via \texttt{OOV\_ENABLED}.
+
+A third mechanism applies transcribe-then-derive at the level of a single field. Where a source document enumerates individual items rather than stating a count outright (a \texttt{numero\_X} field), the extraction produces a companion \texttt{\{field\}\_\_items} list of transcribed \texttt{\{value, quote\}} pairs, and the scalar count is computed in code as the length of that list rather than asked of the model directly — deterministic, grounded in a per-item quote, and always satisfiable once the items themselves are transcribed.
+
+\subsection{Offline metadata compilation}
+\label{sec:bulk-insert-metadata-compile}
+
+The field metadata that Block~3 depends on — per-field description, proposed topic, and, for closed-vocabulary fields, a refined list of enum values with an applicability decision — is not authored by hand. It is generated once, offline, by a batch tool (\texttt{compile.py} / \texttt{scripts/compile\_metadata.py}) that issues batched Instructor calls, in Italian, over the field tree, with each field carrying a model-assigned \texttt{unsure} self-flag. Batch size is configurable (\texttt{COMPILE\_BATCH\_SIZE}). The proposed topic names are deduplicated by exact string match at this stage into \texttt{artifacts/topics.yaml} (a \texttt{topic~$\to$~id} table that \texttt{metadata.py} resolves at runtime); the exact-match deduplication's limits, and the further clustering step it needs, are described next. This is a one-off, build-time tool, never invoked on the request path; its CLI defaults to a dry run, accepts \texttt{--write} to apply changes, \texttt{--field} to scope to one field, and skips already-compiled fields unless \texttt{--force} is given.
+
+\subsection{Topic consolidation}
+\label{sec:bulk-insert-topic-consolidation}
+
+Exact-string deduplication of topic names, applied per compilation batch with no cross-batch or fuzzy matching, produced 236 distinct topic names across 1083 fields — an order of magnitude more than the roughly 30--40 genuinely distinct groupings the field set actually contains — because topic names were proposed independently per batch and were often coupled to the specific product a field belonged to rather than to its general subject. A separate, offline, no-LLM consolidation pass addresses this: topic names are embedded with the same multilingual MiniLM model used in Block~2 (\S\ref{sec:bulk-insert-block2}) and clustered agglomeratively, using cosine distance and average linkage \citep{ward1963hierarchical,murtagh2012algorithms,pedregosa2011scikit}. Each resulting cluster is named after its most-used member, ties broken by shorter name and then alphabetically, and clusters are assigned fresh integer identifiers ordered by size.
+
+A greedy nearest-representative pass was tried first and rejected: a generic, high-frequency name (\emph{superfici}, ``surfaces'') acted as a magnet under that scheme, absorbing 56 unrelated topics into a single hub cluster. Agglomerative clustering does not privilege whichever cluster happens to be nearest at each step in this way, and was adopted for that reason. Three clustering thresholds were swept: 0.55 yields 50 clusters (largest, 56 members); 0.62 yields 74 clusters (largest, 25 members); 0.68 yields 95 clusters (largest, 17 members) — the threshold trades cluster count against residual fragmentation, and is exposed as \texttt{TOPIC\_CLUSTER\_THRESHOLD} (default 0.6) alongside \texttt{TOPIC\_CLUSTER\_ENABLED} (default enabled) and \texttt{TOPIC\_CLUSTER\_LINKAGE} (default \texttt{average}), all CLI-overridable. Cluster identifiers are derived from a specific run of the clustering algorithm and are documented as such: they are not guaranteed stable if the pass is rerun, and \texttt{topics.yaml}, \texttt{metadata.py}, and the topic-based partitioning of \S\ref{sec:bulk-insert-block3} consume the resulting name/id table unchanged, unaware that consolidation happened beneath it.
+
+\subsection{Error handling and hardening}
+\label{sec:bulk-insert-hardening}
+
+Beyond the \texttt{PipelineError} category mapping of \S\ref{sec:bulk-insert-api}, the service authenticates requests by API key, validates the request payload before it reaches the pipeline, and backs off on upstream rate limits using the \texttt{Retry-After} header returned by the LLM gateway. Shutdown is graceful, allowing in-flight requests to complete rather than terminating them abruptly. Logging is structured, emitted as JSON lines, so log records are machine-parseable by the deployment platform without a separate parsing step.
+
+\subsection{Containerization}
+\label{sec:bulk-insert-containerization}
+
+The service ships as a single multi-stage Docker image, roughly 2.5~GB, CPU-only \citep{merkel2014docker}. The embedding model and the \texttt{contracts/} directory of 97 per-leaf JSON schema files are baked into the image rather than fetched at startup, so a container reaches readiness (\S\ref{sec:bulk-insert-api}) without any network dependency beyond the OpenRouter calls it makes per request; only the OpenRouter API key is injected at runtime. Horizontal scaling — how many replicas run behind what load balancer or autoscaler — is a deployment-platform concern outside this image's own configuration surface, consistent with the architectural choice described in \S\ref{sec:bulk-insert-api}.
+
+\section{Part B --- ColdRAG}
+\label{sec:coldrag-system}
+
+ColdRAG is the graph-augmented matching system this thesis's title refers to: a domain-specific implementation, adapted for real-estate off-market intermediation at Dometria AI, of the retrieval-augmented cold-start framework of \S\ref{sec:coldrag-paper}, with an ingestion pipeline built against the DIAL-KG framework of \S\ref{sec:dial-kg} rather than the ColdRAG paper's own graph-construction method. It comprises three modules described in turn below: an ingestion pipeline that builds the knowledge graph (\S\ref{sec:coldrag-ingestion}), an inference engine that retrieves candidates from it (\S\ref{sec:coldrag-inference}), and a conversational completion module that acquires structured input from a human when required fields are missing (\S\ref{sec:coldrag-hitl}).
+
+\subsection{Ingestion: an adapted DIAL-KG pipeline}
+\label{sec:coldrag-ingestion}
+
+Ingestion (\texttt{kg\_builder.py}, \texttt{ingest.py}) begins by computing a deterministic identifier for the incoming document as the SHA-256 hash of its text, and creating or matching a Product node against that identifier — the same document text always yields the same product node, so re-ingesting a document already in the graph updates it rather than duplicating it. An LLM call extracts the document's leaf-level entities and its product title. Each extracted entity is embedded with BGE-M3, a multilingual, multi-granularity, multi-function embedding model producing 1024-dimensional vectors (\S\ref{sec:embedding-models}) \citep{chen2024m3}.
+
+Coreference alignment and named entity disambiguation (\S\ref{sec:ned}) follow the two-stage pattern of vector retrieval plus LLM adjudication: a Neo4j native vector search proposes a small candidate set of already-graphed entities similar to the new one, and an LLM judge decides which candidate, if any, the new entity should be merged into. A specific invariant — \emph{NED immunity} — is enforced throughout this stage: Product nodes and item-level entity nodes are never merged into one another, regardless of embedding similarity, because a product and the entities it mentions are categorically distinct in this graph and conflating them would corrupt both the document-provenance role Product nodes play and the entity-level structure item nodes play.
+
+Every candidate merge and every candidate new edge then passes through a governance adjudication layer before it is committed, applying the entailment-gating pattern of \S\ref{sec:llm-as-judge} at two checks: an evidence check, verifying the claim is actually supported by the source text, and a logical check, verifying it does not contradict what the graph already asserts. Governance is conservative by design: a fact is rejected only on outright contradiction, not merely on low confidence, so recall is favored over precision at this gate specifically, on the reasoning that an ingestion pipeline that runs repeatedly over a large corpus can afford to admit a supportable fact and revisit it later, but cannot cheaply undo a graph corrupted by an over-eager rejection rule that silently drops valid structure. Everything that survives governance is written in a single transactional \texttt{MERGE}, batched via \texttt{UNWIND} so that one ingestion commits many nodes and edges atomically rather than one Cypher statement per fact. Entity profiles produced along the way are auto-saved to the Meta-Knowledge Base (\S\ref{sec:dial-kg}), so that the next ingestion run is disambiguated against this one rather than starting cold.
+
+\subsection{Inference engine: multi-hop retrieval}
+\label{sec:coldrag-inference}
+
+A query is first analyzed by an LLM into a set of key concepts (\texttt{concetti\_chiave}), a boolean \texttt{needs\_reasoning} flag, and a cumulative embedding representing the query as a whole. A Hybrid Router reads this analysis and chooses between two retrieval modes: direct vector search, when the query is well served by similarity alone, and multi-hop graph traversal, when \texttt{needs\_reasoning} indicates the query requires combining evidence connected by graph structure rather than co-located in embedding space (\S\ref{sec:rag}, \S\ref{sec:graphrag}).
+
+The multi-hop loop begins from a hop-0 frontier of \texttt{COLDRAG\_HOP0\_FRONTIER} (default 5) nodes returned by a Neo4j native vector search against the query embedding. Each subsequent hop issues a fan-out Cypher query expanding the current frontier by one edge in every direction, groups the resulting edges to compress what would otherwise be repeated context by roughly 60\%, and scores each grouped edge with an LLM on a 0--10 scale (\S\ref{sec:llm-as-judge}). Edges scoring below the threshold \texttt{COLDRAG\_SCORE\_THRESHOLD} ($\gamma$, default 7.0) are pruned; the surviving frontier carries into the next hop, up to \texttt{COLDRAG\_MAX\_HOPS} (default 5) or until \texttt{COLDRAG\_TARGET\_CANDIDATES} (default 20) candidates have accumulated, whichever comes first. Once retrieval stops, a final LLM pass performs \emph{blind matching} (\S\ref{sec:blind-matching}): candidates are ranked without exposing identifying attributes, and the ranking is returned together with a justification for the ordering. Results are streamed to the frontend progressively over Server-Sent Events as each hop completes \citep{whatwg2026server}, rather than withheld until the full loop terminates.
+
+\subsection{Privacy layer}
+\label{sec:coldrag-privacy}
+
+Before any candidate's numeric metadata is exposed to a user, it is anonymized with the Laplace mechanism of \S\ref{sec:dp-definition}, at privacy budget \texttt{COLDRAG\_DP\_EPSILON} (default 1.0). This is applied at the point of exposure, after ranking, so the values used internally for scoring and traversal are exact; only what leaves the system toward the frontend is perturbed. \S\ref{sec:blind-matching} explains why this is a domain requirement of off-market intermediation rather than an incidental hardening measure: numeric attributes precise enough to support matching are also precise enough to re-identify a listing if exposed repeatedly across queries, which is exactly the cumulative risk a formal privacy budget bounds.
+
+\subsection{Conversational completion: the HITL gatekeeper}
+\label{sec:coldrag-hitl}
+
+The \texttt{ConversationalCompletion/} module acquires structured data from a user through a guided conversation rather than a form. Its control flow is an event-driven state machine built on LlamaIndex Workflows (\S\ref{sec:llamaindex-workflows}), implemented across \texttt{workflow.py} (steps) and \texttt{events.py} (the Pydantic events that pass between them) \citep{liu2026llamaindex}. A user's stated intent is routed deterministically through a fixed taxonomy — intent, then macro-category, then subcategory — defined declaratively in \texttt{rules.yaml} and matched by a semantic router rather than by free-form LLM classification, so the routing step itself is reproducible.
+
+Once a subcategory is fixed, \texttt{models.py}'s \texttt{RuleParser} generates a Pydantic model at runtime from that subcategory's rule definition (\S\ref{sec:structured-output}) — the same runtime-schema-generation pattern Block~3 of \texttt{dometria-bulk-insert} uses (\S\ref{sec:bulk-insert-block3}), applied here to conversational rather than document input. An LLM judge attempts structured extraction from the user's message against this model on every turn; any mandatory field that remains unfilled produces one targeted, streamed follow-up question for that field, rather than a generic prompt to provide more information. The loop repeats until every mandatory field validates, at which point a summary is presented for user confirmation and, once confirmed, a structured payload is emitted and routed onward to either ingestion (\S\ref{sec:coldrag-ingestion}) or search (\S\ref{sec:coldrag-inference}). Conversation state persists across turns in Redis with a 30-minute TTL (\texttt{COLDRAG\_SESSION\_TTL}), external to the workflow process itself, so a conversation survives independently of any single request's lifetime (\S\ref{sec:hitl-validation}).
+
+\subsection{Technical stack and configuration}
+\label{sec:coldrag-stack}
+
+ColdRAG reaches its LLMs through OpenRouter via Instructor in JSON mode, with multi-model fallback and \texttt{deepseek/deepseek-chat} \citep{deepseekai2024deepseek} as the default model. Neo4j~$\geq$5.x is the system's single data store: nodes, edges, vector embeddings, and the singleton Meta-Knowledge Base all live in it, queried through its native vector index rather than a separate ANN library (\S\ref{sec:ann-indices}) \citep{neo4j2026neo4j}. The backend is FastAPI on Uvicorn \citep{ramirez2026fastapi,encode2026uvicorn}, exposing a WebSocket for the turn-by-turn HITL conversation \citep{fette2011websocket} and Server-Sent Events for progressive search results \citep{whatwg2026server}. Redis~$\geq$7.x backs HITL session state \citep{redis2026redis}. The frontend is a single-page application in vanilla JavaScript with vis-network.js for graph visualization, requiring no separate build toolchain.
+
+A \texttt{PerformanceTracker} (\texttt{metrics.py}) instruments every request: latency, an estimated token count (a length-based heuristic, characters divided by four), an estimated dollar cost from a configurable per-million-token input/output price (defaulting to \$0.30 in / \$2.50 out), and throughput in tokens per second. Chapter~\ref{ch:results} reports the tool and one illustrative run it produced; neither figure is a claim about model quality or recommendation accuracy.
+
+Table~\ref{tab:coldrag-hyperparams} lists the environment-variable hyperparameters referenced throughout \S\ref{sec:coldrag-system}, at their documented defaults.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+\hline
+\textbf{Parameter} & \textbf{Default} \\
+\hline
+\texttt{COLDRAG\_TARGET\_CANDIDATES} & 20 \\
+\texttt{COLDRAG\_SCORE\_THRESHOLD} ($\gamma$) & 7.0 \\
+\texttt{COLDRAG\_TOP\_K} & 5 \\
+\texttt{COLDRAG\_MAX\_HOPS} & 5 \\
+\texttt{COLDRAG\_HOP0\_FRONTIER} & 5 \\
+\texttt{COLDRAG\_NED\_TOP\_K} & 10 \\
+\texttt{COLDRAG\_NED\_THRESHOLD} & 0.75 \\
+\texttt{COLDRAG\_DP\_EPSILON} & 1.0 \\
+\texttt{COLDRAG\_SESSION\_TTL} & 1800 s \\
+\texttt{COLDRAG\_SLIDING\_WINDOW} & 4 messages \\
+\hline
+\end{tabular}
+\caption{ColdRAG hyperparameters and their documented defaults. These are configuration defaults, not values measured in an experiment.}
+\label{tab:coldrag-hyperparams}
+\end{table}
+
+\subsection{Exposed API}
+\label{sec:coldrag-api}
+
+ColdRAG exposes its functionality through a fixed set of REST, WebSocket, and SSE endpoints: \texttt{/api/search} (multi-hop retrieval, streamed over SSE), \texttt{/api/ingest\_product} (real-time DIAL-KG ingestion of a single document), \texttt{/ws/hitl/\{session\_id\}} (the conversational completion WebSocket), \texttt{/api/taxonomy} (the \texttt{rules.yaml}-derived taxonomy), \texttt{/api/graph/overview}, \texttt{/api/db\_stats}, \texttt{/api/config}, \texttt{/api/mkb}, \texttt{/api/subgraph}, and \texttt{/api/egonet/\{entity\_id\}} (graph-inspection and visualization endpoints consumed by the vis-network.js frontend of \S\ref{sec:coldrag-stack}).
