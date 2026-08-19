@@ -7,6 +7,20 @@
 \usepackage{natbib}
 \usepackage{url} % verbatim-safe \url{} for bibliography URLs (underscores, etc.)
 
+% Inline marker for a claim still awaiting a source in bib.md.
+\newcommand{\todo}[1]{\textbf{[TODO: #1]}}
+
+% Reserved space for a figure not yet drawn. Replace the whole call with
+% \includegraphics once the artwork exists; the optional argument is the
+% height the final figure is expected to occupy.
+\newcommand{\figplaceholder}[2][0.28\textheight]{%
+  \fbox{%
+    \begin{minipage}[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}%
+      \centering\itshape\small #2%
+    \end{minipage}%
+  }%
+}
+
 \title{From Documents to Matches: \\
 Evidence-Grounded Extraction and GraphRAG Cold-Start Recommendation
 for Real-Estate Off-Market Intermediation}

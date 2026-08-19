@@ -11,12 +11,32 @@ This chapter establishes the concepts, models, and prior work required to read C
 
 A language model assigns a probability to a sequence of tokens, or equivalently predicts the next token given its predecessors. Early language models estimated this distribution with $n$-gram counts over a training corpus, a formulation that traces back to Shannon's information-theoretic treatment of language as a stochastic process \citep{shannon1948mathematical}. $n$-gram models are simple and exact but suffer from data sparsity: most sequences of length $n$ never occur in any finite corpus, forcing smoothing heuristics and capping the context that can be modeled.
 
-Bengio et al. replaced discrete counts with a neural network that maps each vocabulary item to a dense, learned vector and predicts the next token from the concatenation of the preceding vectors \citep{bengio2003neural}. This established two ideas that persist through every subsequent architecture discussed in this chapter: representing words as continuous embeddings rather than one-hot symbols, and training the representation and the predictive model jointly. Word2Vec \citep{mikolov2013distributed} and GloVe \citep{pennington2014glove} later factored the embedding step out as a standalone, context-independent pretraining objective, producing reusable word vectors consumed by task-specific models. A limitation shared by all of these is that a word receives exactly one vector regardless of context: ``bank'' is encoded identically in ``river bank'' and ``bank account.'' ELMo addressed this by deriving contextual embeddings from a bidirectional LSTM's hidden states, so a word's representation varies with its sentence \citep{peters2018deep}. Context-dependent representation is a prerequisite for the architecture described next, and reappears in \S\ref{sec:embedding-models} as the basis of the sentence-level embedding models both systems in this thesis use for similarity search.
+Bengio et al. replaced discrete counts with a neural network that maps each vocabulary item to a dense, learned vector and predicts the next token from the concatenation of the preceding vectors \citep{bengio2003neural}. This established two ideas that persist through every subsequent architecture discussed in this chapter: representing words as continuous embeddings rather than one-hot symbols, and training the representation and the predictive model jointly. Word2Vec \citep{mikolov2013distributed} and GloVe \citep{pennington2014glove} later factored the embedding step out as a standalone, context-independent pretraining objective, producing reusable word vectors consumed by task-specific models. A limitation shared by all of these is that a word receives exactly one vector regardless of context: ``bank'' is encoded identically in ``river bank'' and ``bank account.''
+
+Bengio's model also inherits one property of the $n$-gram formulation it replaced: it conditions on a fixed-width window of preceding tokens, so context beyond that window is unavailable no matter how the representation is learned. Recurrent neural networks remove the fixed window by maintaining a hidden state that is updated one token at a time and carried forward, in principle summarizing an unbounded prefix of the sequence. In practice the gradient signal that trains such a state either vanishes or explodes as it is propagated back over many time steps, which bounds the dependencies a plain recurrent network can learn. The Long Short-Term Memory (LSTM) architecture addresses this with a separate cell state and multiplicative gates that control what is written to it, retained in it, and read from it, giving gradients a path across long spans that is not repeatedly attenuated \todo{cite}. Recurrent encoder-decoder models then extended this to mapping one sequence to another, compressing the whole input into a single fixed-length vector from which the output is generated \todo{cite} --- a bottleneck that was relieved by letting the decoder consult all input positions at each output step, weighted by learned relevance \todo{cite}. This is the origin of the attention mechanism, which \S\ref{sec:transformer} describes as the sole remaining component once recurrence is discarded.
+
+Two properties of this family motivate what replaced it. Because the hidden state at position $t$ depends on the state at $t-1$, computation cannot be parallelized across positions within a sequence, which caps training throughput on long inputs. And even with gating, the path a signal travels between two distant tokens grows with their separation. ELMo, the last of the architectures described here, derives contextual embeddings from a bidirectional LSTM's hidden states, so a word's representation varies with its sentence \citep{peters2018deep}. Context-dependent representation is a prerequisite for the architecture described next, and reappears in \S\ref{sec:embedding-models} as the basis of the sentence-level embedding models both systems in this thesis use for similarity search.
 
 \subsection{Transformer architecture and autoregressive models}
 \label{sec:transformer}
 
-The Transformer replaced recurrence with self-attention: every token's representation is updated by attending to every other token in the sequence in parallel, weighted by learned compatibility scores \citep{vaswani2017attention}. Removing recurrence removes the sequential dependency that made recurrent networks slow to train on long sequences, and self-attention gives every pair of tokens a direct path to one another regardless of distance, which mitigates the degradation in how much distant context recurrent networks retain in practice.
+The Transformer replaced recurrence with self-attention: every token's representation is updated by attending to every other token in the sequence in parallel, weighted by learned compatibility scores \citep{vaswani2017attention}. Removing recurrence removes the sequential dependency that made recurrent networks slow to train on long sequences, and self-attention gives every pair of tokens a direct path to one another regardless of distance, which mitigates the degradation in how much distant context recurrent networks retain in practice. Figure~\ref{fig:self-attention} contrasts the two connectivity patterns.
+
+\begin{figure}[htbp]
+\centering
+\figplaceholder{Figure placeholder --- self-attention in a Transformer block.
+Left: a recurrent layer, where the representation of each token is computed from
+its predecessor's hidden state, giving a path length between two tokens that
+grows with their separation. Right: a self-attention layer over the same
+sequence, where every token is connected directly to every other, weighted by
+learned compatibility scores, and all positions are computed in parallel.
+Below: the residual block --- multi-head attention, add \& norm, feed-forward,
+add \& norm --- stacked $N$ times.}
+\caption{Self-attention replaces recurrence. Every pair of tokens is connected
+by a direct, constant-length path, and no position depends on another having
+been computed first.}
+\label{fig:self-attention}
+\end{figure}
 
 Three families of models built on the Transformer differ in how they use attention. Encoder models such as BERT attend bidirectionally — every token sees the whole input, including tokens to its right — and are trained with a masked-token prediction objective, which suits representation learning for classification and extraction rather than open-ended generation \citep{devlin2019bert}. Encoder-decoder models such as T5 pair a bidirectional encoder over the input with an autoregressive decoder over the output, casting every task as text-to-text \citep{raffel2020exploring}. Decoder-only, autoregressive models such as the GPT family mask attention to the left context only, so each token is predicted from its predecessors alone, and generation proceeds one token at a time by repeatedly sampling from this conditional distribution \citep{radford2018improving,brown2020language}. This thesis uses \emph{LLM} to refer to the decoder-only, autoregressive family, since it is the family the systems in Chapter~\ref{ch:systems} consume through an API; encoder models still appear in both systems, but as embedding models (\S\ref{sec:embedding-models}) rather than as generators.
 
@@ -72,9 +92,33 @@ A further line of work makes the pipeline adaptive rather than fixed, letting th
 \subsection{GraphRAG: knowledge graphs, community detection, and multi-hop reasoning}
 \label{sec:graphrag}
 
-GraphRAG replaces the flat passage index with a knowledge graph extracted from the corpus by an LLM, and replaces similarity-only retrieval with retrieval guided by graph structure \citep{edge2024local}. Two properties of a knowledge graph answer the two limits of flat RAG directly: entities and relations are extracted once at ingestion time, which makes cross-document connections explicit as edges rather than implicit in embedding proximity, and traversal along those edges gives retrieval a mechanism for multi-hop reasoning that a single similarity query cannot express.
+\begin{figure}[htbp]
+\centering
+\figplaceholder[0.36\textheight]{Figure placeholder --- flat RAG versus GraphRAG.
+Left panel: the flat pipeline. Query $\rightarrow$ embedding $\rightarrow$
+top-$k$ similarity lookup against an index of independently embedded passages
+$\rightarrow$ the retrieved passages concatenated into the generator's prompt.
+The passages are drawn as an unordered set with no connections between them,
+and two passages that jointly answer the query are shown as separately scored,
+either of which may fall below the cut-off.
+Right panel: the graph pipeline. Corpus $\rightarrow$ LLM extraction of entities
+and relations at ingestion time $\rightarrow$ a knowledge graph in which
+cross-document connections are explicit edges. A query enters at a seed set of
+nodes found by vector search, and traversal follows edges outward, so evidence
+is assembled along a path rather than gathered from a single similarity ranking.}
+\caption{The structural difference between flat and graph-based retrieval.
+Flat retrieval scores each passage independently against the query; graph
+retrieval enters at a seed set and follows relations extracted once at
+ingestion time, which is what makes multi-hop evidence reachable in a single
+query.}
+\label{fig:rag-vs-graphrag}
+\end{figure}
+
+GraphRAG replaces the flat passage index with a knowledge graph extracted from the corpus by an LLM, and replaces similarity-only retrieval with retrieval guided by graph structure \citep{edge2024local}. Figure~\ref{fig:rag-vs-graphrag} sets the two architectures side by side. Two properties of a knowledge graph answer the two limits of flat RAG directly: entities and relations are extracted once at ingestion time, which makes cross-document connections explicit as edges rather than implicit in embedding proximity, and traversal along those edges gives retrieval a mechanism for multi-hop reasoning that a single similarity query cannot express.
 
 Microsoft's GraphRAG builds this graph automatically — an LLM extracts entities, relations, and claims from source documents — and applies the Leiden algorithm to partition the graph into hierarchical communities of densely connected nodes \citep{edge2024local,traag2019louvain}. Leiden improves on its predecessor Louvain by guaranteeing that every detected community is internally connected, which Louvain does not \citep{traag2019louvain,blondel2008fast}. Each community is then summarized by an LLM, and query answering combines the relevant summaries; this is GraphRAG's global search mode, aimed at questions about a corpus as a whole rather than a specific fact.
+
+The mechanism is easiest to see on a small graph. Both algorithms optimize modularity, a score that compares the density of edges falling inside candidate communities against the density expected if the same nodes were wired at random. Louvain proceeds in two alternating phases: each node is first moved to whichever neighboring community most increases modularity, repeatedly until no single move helps; the resulting communities are then collapsed into single nodes, with edge weights aggregated, and the procedure runs again on this smaller graph, which is what produces a hierarchy of progressively coarser partitions. Applied to a corpus of real-estate documents, a first-level community might gather the entities of one asset class in one city, and the level above it merge that with adjacent classes and neighboring areas. The defect Leiden fixes arises during the first phase: moving nodes one at a time can strand a community in a state where the nodes assigned to it are no longer joined by any path inside it --- a ``community'' in name only, since it corresponds to nothing connected in the graph. Leiden inserts a refinement step that partitions each community into internally connected pieces before collapsing, so this cannot occur. For a summarization pipeline the guarantee matters practically rather than aesthetically: a disconnected community handed to an LLM yields a summary over entities that share no relation, which then behaves as a plausible but unfounded retrieval target.
 
 Community summarization is not the retrieval pattern this thesis's systems use. What carries forward from GraphRAG is the more general property: a knowledge graph built by an LLM from unstructured text, serving simultaneously as a provenance record (an answer points to the specific edges that produced it) and as a substrate for iterative traversal. Subsequent work explores different retrieval strategies over such a graph — HippoRAG's memory-inspired indexing \citep{gutierrez2024hipporag}, Think-on-Graph's LLM-guided path exploration \citep{sun2024think} — and the design space is now large enough to have been surveyed as a field in its own right \citep{peng2024graph,pan2024unifying}. Sections~\ref{sec:coldrag-paper} and \ref{sec:dial-kg} narrow this family to the two frameworks Chapter~\ref{ch:systems} adapts directly.
 
@@ -84,7 +128,23 @@ Community summarization is not the retrieval pattern this thesis's systems use. 
 \subsection{Collaborative filtering, content-based, and hybrid approaches}
 \label{sec:cf-content-hybrid}
 
-Collaborative filtering (CF) recommends items from patterns in a user-item interaction matrix alone, on the assumption that users who agreed in the past will agree again. Item-based CF scores a candidate by its co-interaction similarity to items the user has already engaged with \citep{sarwar2001item}; matrix factorization learns low-dimensional latent vectors for users and items whose inner product approximates observed interaction strength \citep{koren2009matrix}. Because most real interaction data records implicit signals (a click, a view) rather than explicit ratings, variants reformulate the objective around confidence-weighted implicit feedback \citep{hu2008collaborative} or around ranking pairs of observed and unobserved items \citep{rendle2009bpr}, and later work replaces the inner product with a learned neural interaction function \citep{he2017neural}. Ranking quality across all these methods is conventionally measured with position-discounted metrics such as NDCG \citep{jarvelin2002cumulated}. CF requires no item or user attributes, only interaction history — simultaneously its strength (domain-agnostic) and its structural weakness: an entity with no interaction history offers nothing to factorize.
+Collaborative filtering (CF) recommends items from patterns in a user-item interaction matrix alone, on the assumption that users who agreed in the past will agree again. Item-based CF scores a candidate by its co-interaction similarity to items the user has already engaged with \citep{sarwar2001item}; matrix factorization learns low-dimensional latent vectors for users and items whose inner product approximates observed interaction strength \citep{koren2009matrix}. Because most real interaction data records implicit signals (a click, a view) rather than explicit ratings, variants reformulate the objective around confidence-weighted implicit feedback \citep{hu2008collaborative} or around ranking pairs of observed and unobserved items \citep{rendle2009bpr}, and later work replaces the inner product with a learned neural interaction function \citep{he2017neural}. CF requires no item or user attributes, only interaction history — simultaneously its strength (domain-agnostic) and its structural weakness: an entity with no interaction history offers nothing to factorize.
+
+Ranking quality across all these methods is conventionally measured over a truncated list of $K$ recommendations, since a user inspects only the top of it. Three metrics recur. Hit Rate at $K$ (HR@$K$) is the fraction of users for whom at least one relevant item appears in the top $K$ — a coarse, binary measure of whether the list is useful at all. Recall at $K$,
+\begin{equation}
+\mathrm{Recall}@K \;=\; \frac{|\,\mathcal{R}_u \cap \mathcal{L}_u^{K}\,|}{|\,\mathcal{R}_u\,|},
+\label{eq:recall-at-k}
+\end{equation}
+measures what proportion of the items relevant to user $u$, written $\mathcal{R}_u$, the returned list $\mathcal{L}_u^{K}$ actually contains. Neither metric distinguishes a relevant item ranked first from one ranked $K$-th. Normalized Discounted Cumulative Gain does, by weighting each position by a logarithmic discount \citep{jarvelin2002cumulated}:
+\begin{equation}
+\mathrm{DCG}@K \;=\; \sum_{i=1}^{K} \frac{2^{\,rel_i} - 1}{\log_2(i+1)},
+\qquad
+\mathrm{NDCG}@K \;=\; \frac{\mathrm{DCG}@K}{\mathrm{IDCG}@K},
+\label{eq:ndcg}
+\end{equation}
+where $rel_i$ is the graded relevance of the item at position $i$ and $\mathrm{IDCG}@K$ is the value the same items would achieve in their ideal order, which normalizes the score to $[0,1]$ and makes it comparable across queries with different numbers of relevant items.
+
+All three presuppose a ground-truth relevance set $\mathcal{R}_u$, obtained in the standard evaluation protocol by holding out interactions the system is then asked to predict. This is precisely what a deployment with no interaction history cannot supply, and it is the reason Chapter~\ref{ch:results} reports no figure of this kind: the metrics are stated here so that their absence later is legible as a specific, structural consequence of the cold-start setting rather than an omission.
 
 Content-based filtering compares item or user attributes directly, recommending items close in feature space to what a user has liked. It needs no interaction history and is therefore immune to that failure, at the cost of requiring informative, well-structured attributes as input — which is precisely what the extraction system of Chapter~\ref{ch:systems} exists to produce. Hybrid systems combine the two, and Burke's survey frames the combination along several axes (weighting, switching, feature combination) rather than as a single fixed design \citep{burke2002hybrid}. Knowledge-graph-based recommenders are a structured variant of this hybridization, propagating user preferences over a graph of item attributes and relations so that side information contributes to ranking alongside collaborative signal \citep{wang2019kgat,guo2022survey}.
 
@@ -148,6 +208,8 @@ All three have moved from dedicated supervised models toward LLM prompting, and 
 
 Chain-of-thought prompting (\S\ref{sec:instruction-tuning}) produces one reasoning path per generation, and that path can be wrong even when the model is, in aggregate, capable of reasoning correctly about the problem. Self-consistency samples several independent chain-of-thought completions for the same prompt at non-zero temperature and takes a majority vote over their final answers, discarding the reasoning paths and keeping only what they converge to \citep{wang2023self}. Errors in reasoning are not perfectly correlated across independent samples, whereas a correct answer is a comparatively stable attractor that distinct paths tend to reach, so the vote is more reliable than any single sample.
 
+A concrete instance clarifies both the mechanism and its limits. Suppose an extraction step must report the total floor area of a property from a document that states the area of each of three floors separately. Three independently sampled completions might reason: the first sums the three stated figures and returns their total; the second sums them but drops the smallest term, returning a different total; the third sums them correctly and returns the same value as the first. The majority answer is the one reached twice, and it is returned; the reasoning text of all three is discarded. The vote works here because the two correct paths agree by arriving at the same place, while the arithmetic slip of the second produces a value that nothing else corroborates. It would not work if all three samples shared the same misreading of which figures to sum --- errors correlated across samples survive a majority vote intact, which is why self-consistency reduces the variance of a capable model rather than repairing a systematic misunderstanding.
+
 Wang et al. report consistent gains over chain-of-thought prompting alone across reasoning benchmarks: GSM8K improves by 17.9 percentage points, SVAMP by 11.0, AQuA by 12.2, StrategyQA by 6.4, and ARC-challenge by 3.9 \citep{wang2023self}. The cost is linear in the number of samples, which makes it a mechanism to apply selectively rather than everywhere; Chapter~\ref{ch:systems} restricts voting to mandatory and high-priority field groups for exactly this reason. Related mechanisms reuse the same insight differently, having a model revise its own output against self-generated feedback \citep{madaan2023self} or verify a candidate answer by reasoning backwards from it \citep{weng2023large}.
 
 \subsection{LLM-as-judge and entailment gating}
@@ -172,7 +234,28 @@ Both systems in Chapter~\ref{ch:systems} operate on Italian source documents, wh
 \subsection{Vector indices and nearest-neighbor search}
 \label{sec:ann-indices}
 
-Exact nearest-neighbor search compares a query vector against every stored vector, scaling linearly with index size and becoming the retrieval bottleneck as a corpus grows. Approximate nearest-neighbor (ANN) methods trade a small, controllable amount of recall for large speedups. Hierarchical Navigable Small World graphs (HNSW) build a multi-layer proximity graph over the indexed vectors and search it greedily from a coarse top layer down to a fine bottom layer, achieving logarithmic-time search in practice at high recall \citep{malkov2020efficient}; other index families quantize vectors to trade memory for accuracy, and mature libraries implement several such strategies behind one interface \citep{johnson2021billion}. Dense retrieval is also frequently combined with lexical scoring such as BM25, since the two fail on different queries — exact identifiers and rare terms favor lexical matching, paraphrase favors dense \citep{robertson2009probabilistic}.
+Exact nearest-neighbor search compares a query vector against every stored vector, scaling linearly with index size and becoming the retrieval bottleneck as a corpus grows. Approximate nearest-neighbor (ANN) methods trade a small, controllable amount of recall for large speedups. Hierarchical Navigable Small World graphs (HNSW) build a multi-layer proximity graph over the indexed vectors and search it greedily from a coarse top layer down to a fine bottom layer, achieving logarithmic-time search in practice at high recall \citep{malkov2020efficient}; other index families quantize vectors to trade memory for accuracy, and mature libraries implement several such strategies behind one interface \citep{johnson2021billion}.
+
+\begin{figure}[htbp]
+\centering
+\figplaceholder[0.32\textheight]{Figure placeholder --- HNSW layered proximity
+graph and greedy descent. Three stacked layers over the same vector set: the
+top layer holds a sparse sample of nodes joined by long-range edges, each lower
+layer adds more nodes and shorter edges, and the bottom layer contains every
+indexed vector. A query vector enters at a fixed entry point in the top layer;
+an arrow traces the greedy walk, moving at each step to whichever neighbor is
+closer to the query and dropping to the next layer down when no neighbor
+improves, ending in a short local search among the query's nearest neighbors in
+the bottom layer. The traversed path is highlighted against the unvisited
+majority of the graph.}
+\caption{Greedy descent through an HNSW index. Upper layers cover distance
+cheaply with few, long edges; lower layers resolve the neighborhood precisely.
+Only the highlighted path is visited, which is why search cost grows
+logarithmically rather than linearly in index size.}
+\label{fig:hnsw}
+\end{figure}
+
+Figure~\ref{fig:hnsw} traces a single query. The layered construction is what turns a linear scan into a short walk: the top layer contains a sparse random sample of the indexed vectors connected by long edges, so a few steps there cover a large distance in embedding space, and each descent adds nodes and shortens edges until the bottom layer, which holds every vector, resolves the immediate neighborhood. A search enters at a fixed point in the top layer, repeatedly moves to whichever neighbor lies closer to the query, and drops a layer when no neighbor improves on the current node. The approximation enters exactly here: the walk is greedy, so it can settle in a local optimum and terminate near --- but not at --- the true nearest neighbor, which is the recall that is being traded for speed. The parameter governing that trade is the size of the candidate list kept during the search, widening it explores more of each layer and recovers recall at proportionate cost. For the graph store used in Chapter~\ref{ch:systems}, this trade-off is a property of the database's index rather than something the retrieval engine implements or tunes directly. Dense retrieval is also frequently combined with lexical scoring such as BM25, since the two fail on different queries — exact identifiers and rare terms favor lexical matching, paraphrase favors dense \citep{robertson2009probabilistic}.
 
 Where a system already stores a knowledge graph, keeping the vector index inside the same database avoids maintaining consistency between two stores that must be traversed together. Chapter~\ref{ch:systems}'s retrieval engine takes this approach, issuing vector search and graph traversal against a single Neo4j instance with a native vector index rather than pairing a standalone ANN library with a separate graph store \citep{neo4j2026neo4j}.
 
@@ -211,7 +294,28 @@ The Laplace mechanism achieves this guarantee for a numeric query $f$ by adding 
 \Delta f \;=\; \max_{D, D'} \lVert f(D) - f(D') \rVert_1
 \label{eq:sensitivity}
 \end{equation}
-is the largest change a single record can induce in the query's true output \citep{dwork2006calibrating}. Sensitivity, not $\varepsilon$ alone, determines how much a specific output is perturbed: a query that no individual record can move far tolerates proportionally less noise for the same guarantee. The guarantee also degrades under repetition — answering many queries over the same data consumes budget cumulatively — which is why $\varepsilon$ is a system-level parameter rather than a per-query one.
+is the largest change a single record can induce in the query's true output \citep{dwork2006calibrating}.
+
+\begin{figure}[htbp]
+\centering
+\figplaceholder[0.30\textheight]{Figure placeholder --- the Laplace mechanism at
+two privacy budgets. A horizontal axis of released values with the true query
+answer marked at the centre. Two Laplace densities centred on it: a narrow one
+for a large $\varepsilon$ (weak guarantee, released value close to the truth)
+and a wide one for a small $\varepsilon$ (strong guarantee, released value
+possibly far from it), with the scale $\Delta f / \varepsilon$ annotated on
+each. Below, the same picture for two neighbouring datasets $D$ and $D'$
+differing in one record: their output distributions overlap heavily, and the
+bounded ratio between them at any point is the quantity Equation~\ref{eq:dp}
+constrains.}
+\caption{The Laplace mechanism. Noise scale is set by sensitivity divided by
+the privacy budget, so a smaller $\varepsilon$ widens the distribution and
+makes the two neighbouring datasets harder to tell apart at the cost of
+accuracy in the released value.}
+\label{fig:laplace}
+\end{figure}
+
+Figure~\ref{fig:laplace} shows the trade-off the two parameters jointly control. Sensitivity, not $\varepsilon$ alone, determines how much a specific output is perturbed: a query that no individual record can move far tolerates proportionally less noise for the same guarantee. The guarantee also degrades under repetition — answering many queries over the same data consumes budget cumulatively — which is why $\varepsilon$ is a system-level parameter rather than a per-query one.
 
 Applying differential privacy to recommendation specifically is well established, since released recommendations are themselves a function of the underlying records and can leak information about them \citep{mcsherry2009differentially}. Chapter~\ref{ch:systems} applies the Laplace mechanism to numeric metadata before candidate results are exposed to a user, with the privacy budget exposed as a configuration parameter; \S\ref{sec:blind-matching} explains why that exposure is a domain requirement and not merely a precaution.
 
@@ -233,3 +337,12 @@ Off-market intermediation — matching an asset with a counterparty before or wi
 This is the practical motivation for the anonymization step of \S\ref{sec:dp-definition}. A system that streams candidate metadata to a user during exploration exposes numeric attributes repeatedly and across many queries, and attributes precise enough to be useful for matching are also precise enough to re-identify a listing when combined — which is exactly the accumulation-over-queries risk that a formal privacy budget bounds and an ad-hoc rounding rule does not.
 
 Two classical results frame the problem the matching system addresses. Information asymmetry over hidden quality degrades a market when the informed party cannot credibly disclose and the uninformed party cannot verify \citep{akerlof1970market}, which is the condition confidential deal-flow creates deliberately and which staged disclosure is designed to manage. And the underlying task — pairing two sides of a market according to mutual preference — is the subject of two-sided matching theory \citep{gale1962college,roth1990two}, whose framing of a match as jointly acceptable to both parties, rather than as a ranked list produced for one, is the sense in which Chapter~\ref{ch:systems} uses the term.
+
+\section{Summary}
+\label{sec:background-summary}
+
+The material in this chapter converges on a single constraint. An instruction-tuned LLM can read a heterogeneous document and return a structured record (\S\ref{sec:structured-output}), but it can also fabricate one, and it does not repeat itself exactly (\S\ref{sec:llm-limitations}). Every remaining mechanism assembled here is a response to that: retrieval conditions generation on a corpus instead of on parameters (\S\ref{sec:rag}), a knowledge graph makes cross-document relations explicit and traversable rather than latent in embedding proximity (\S\ref{sec:graphrag}), sampling several completions and voting suppresses uncorrelated reasoning errors (\S\ref{sec:self-consistency}), and an evidence-bounded judge refuses a claim its cited span does not support (\S\ref{sec:llm-as-judge}). None of these is sufficient alone; each constrains a different failure.
+
+The application setting supplies the rest. Matching a newly listed asset is item cold-start in its strict form (\S\ref{sec:item-vs-user-coldstart}): no interaction history exists for the item, and no historical corpus is available to pre-train an alignment model on, which excludes the collaborative and content-alignment remedies and leaves content-derived, graph-structured retrieval as the applicable approach --- the reasoning behind the ColdRAG framework of \S\ref{sec:coldrag-paper}. Because the corpus grows one document at a time and no fixed ontology governs it, graph construction must be incremental and schema-free, which makes entity disambiguation unavoidable rather than optional (\S\ref{sec:schema-free-kgc}, \S\ref{sec:ned}) and is what DIAL-KG addresses (\S\ref{sec:dial-kg}). Because the deal-flow is confidential, numeric attributes cannot be exposed as retrieved (\S\ref{sec:blind-matching}), which is what the privacy budget of \S\ref{sec:dp-definition} bounds. And because attributes must be complete before a record is usable, missing mandatory fields are elicited from a person rather than inferred (\S\ref{sec:hitl-validation}).
+
+Chapter~\ref{ch:systems} describes the two systems built on these foundations and refers back to the sections above at each point rather than restating them: an extraction service that turns Italian real-estate documents into structured, evidence-carrying asset records, and a matching engine that ingests those records into a knowledge graph and retrieves candidates by multi-hop reasoning over it.
