@@ -1,0 +1,46 @@
+\chapter{Introduction}
+\label{ch:introduction}
+
+\section{Application context}
+\label{sec:intro-context}
+
+The value of a real-estate asset is a function of its attributes: surface areas, cadastral and legal status, condition, energy class, tenancy and income, location. Hedonic pricing formalizes this as a bundle of characteristics whose implicit prices are recoverable from market data \citep{rosen1974hedonic}, and the professional standards that govern valuation practice in Europe — RICS, IVS, EVS, and for Italy Tecnoborsa's \emph{Codice delle Valutazioni Immobiliari} — prescribe which attributes a valuation must report and on what basis \citep{royalinstitutionofcharteredsurveyors2024rics,internationalvaluationstandardscouncil2024international,tegova2025european,tecnoborsa2025codice}. Both presuppose that the attributes of an asset are known and comparable across assets. In practice they are neither.
+
+The attribute record does not exist as a record. It is dispersed across documents produced for other purposes and by different authors — deeds, cadastral extracts, appraisals, technical reports, lease agreements, marketing memoranda — written as prose, in Italian, in formats that vary by originator and by asset type. Assembling a comparable record from them is manual work repeated per asset, and it does not accumulate: two documents describing similar assets are organized differently, so the reconciliation has to be redone each time rather than reused.
+
+Off-market intermediation removes what little structure a public listing would impose. An asset matched to a counterparty before or without a listing is never published at all; the seller's identity, the asset's precise location, and the fact that a sale is contemplated are disclosed in stages, typically gated by a non-disclosure agreement (\S\ref{sec:blind-matching}). The resulting information asymmetry is the condition Akerlof described: the informed party cannot credibly disclose and the uninformed party cannot verify \citep{akerlof1970market}. Here the asymmetry is deliberate rather than incidental, so the remedy cannot be disclosure. It has to be a matching process that operates on attributes without revealing the counterparty.
+
+Applied machine learning in the domain has concentrated on price prediction, from hedonic regression to learned successors trained on listing or transaction data \citep{baldominos2018identifying,perezrave2019machine,zaki2022house,tekouabou2024ai}; recommendation in real estate has been surveyed separately \citep{henriquezmiranda2025recommender}, alongside broader treatments of the sector \citep{kuppan2024foundational}. What both lines of work take as given is a structured dataset. Neither addresses producing one from the documents in which the information actually resides, and both draw their signal from a transaction history that off-market assets, transacted once and confidentially, do not supply.
+
+\section{Dometria AI}
+\label{sec:intro-dometria}
+
+Dometria AI originates from the REAL project at Scuola Superiore Sant'Anna in Pisa. It is organized around two technological cores: \emph{Value}, concerned with the valuation of an asset, and \emph{Connect}, concerned with matching supply and demand. Both rest on the same precondition — a structured, comparable record for every asset — and neither is served directly by the document forms in which that information arrives. The work described in this thesis was carried out at Dometria AI and addresses the two ends of that data pipeline: producing the record, and matching on it.
+
+\section{The two problems addressed}
+\label{sec:intro-problems}
+
+The first problem is to turn a heterogeneous document into a structured asset record whose schema depends on what kind of asset the document describes. The difficulty is not extraction as such — schema-constrained extraction from an LLM is an established technique (\S\ref{sec:structured-output}) — but trustworthiness. An attribute extracted incorrectly is worse than one left empty, because it propagates silently into a valuation or a match with no signal that it should be checked. LLMs hallucinate (\S\ref{sec:llm-limitations}), and repeated calls with identical prompts at temperature zero are not guaranteed to agree \citep{he2025defeating}. A pipeline whose output feeds a financial decision therefore has to make every value auditable against its source and has to be able to abstain rather than guess.
+
+The second problem is to recommend an asset that has no interaction history. Collaborative filtering derives its signal entirely from a user-item interaction matrix (\S\ref{sec:cf-content-hybrid}), so a newly ingested asset contributes nothing to it — the item cold-start condition (\S\ref{sec:item-vs-user-coldstart}). Off-market real estate is a limiting case of that condition: assets are unique, transacted once, and transacted confidentially, so history neither accumulates for the individual asset nor can be assumed for the corpus. The established cold-start remedies substitute content signal for interaction signal but require a training stage over an existing interaction corpus, which is unavailable here. Matching must proceed from extracted content alone.
+
+The two problems are consecutive rather than independent: the record produced by the first is the only signal available to the second. That dependency also constrains the first. An attribute extracted without support does not merely misdescribe one asset; it enters the knowledge graph the matching system reasons over, where it is indistinguishable from a supported one.
+
+\section{Objectives and contributions}
+\label{sec:intro-contributions}
+
+The objective of this thesis is to document the design, implementation, and evaluation of two systems built at Dometria AI to address these problems, and to state precisely what their evaluation does and does not establish. The contributions are the following.
+
+\begin{itemize}
+  \item \texttt{dometria-bulk-insert}, a stateless synchronous extraction microservice that turns a document into a structured, evidence-grounded asset record (\S\ref{sec:bulk-insert}). Its extraction stage selects a product schema by traversing a three-level category tree, generates the corresponding Pydantic model at runtime from a field tree unioned offline over 97 contract types, pairs every field with a verbatim quote and rejects any populated field lacking one, gives every closed vocabulary an explicit abstention value, and computes arithmetic and cross-field values in code rather than requesting them from the model.
+  \item ColdRAG, a graph-augmented retrieval system that matches assets under item cold-start (\S\ref{sec:coldrag-system}). It adapts the ColdRAG framework \citep{yang2025adaptive} to the real-estate off-market setting, builds its knowledge graph through an ingestion pipeline derived from DIAL-KG \citep{bao2026dial} with named entity disambiguation and a conservative governance layer, retrieves candidates through a multi-hop loop with LLM edge scoring and threshold pruning, anonymizes numeric metadata under $\varepsilon$-differential privacy before exposing it, and acquires structured demand-side input through a human-in-the-loop conversational module validated against runtime-generated Pydantic models.
+  \item The articulation of one methodological principle shared by both systems, \emph{transcribe-then-derive} (\S\ref{sec:evidence-grounded-principle}): the LLM transcribes evidence and never computes a final value, and every value requiring computation or cross-referencing is derived afterwards in ordinary code from what was transcribed.
+  \item An account of the evaluation instrumentation each system provides — variance and out-of-vocabulary measurement for one, latency and cost tracking for the other — and an explicit statement of what it does not provide (Chapter~\ref{ch:results}).
+\end{itemize}
+
+Two limits of scope are stated at the outset. Neither system performs standard-compliant valuation, and no claim of compliance with any of the standards cited above is made; the standards are used for terminology and attribute conventions. And the ColdRAG system described here is a domain-specific adaptation of the published framework rather than its authors' implementation, which is maintained separately (\S\ref{sec:coldrag-paper}).
+
+\section{Structure of the thesis}
+\label{sec:intro-structure}
+
+Chapter~\ref{ch:background} establishes the background required to read the rest of the thesis without further explanation: machine-learning and language-model foundations, retrieval augmentation and GraphRAG, the cold-start problem, knowledge-graph construction, LLM-based validation, vector search, human-in-the-loop acquisition, differential privacy, and the real-estate domain context. Chapter~\ref{ch:systems} describes what was built, referring back to Chapter~\ref{ch:background} for every design choice rather than restating it, and is divided into the extraction system (Part~A) and the matching system (Part~B). Chapter~\ref{ch:results} reports the evaluation instruments of both systems, what they measure, and the absence of a formal accuracy benchmark. Chapter~\ref{ch:conclusions} summarizes the outcome, synthesizes the two halves of the pipeline, and states the limitations and directions for further work.
