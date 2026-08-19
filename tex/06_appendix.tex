@@ -1,0 +1,81 @@
+\chapter{Use of Artificial Intelligence in the Preparation of This Thesis}
+\label{ch:ai-appendix}
+
+This appendix documents two aspects of how artificial intelligence was used in preparing this document. \S\ref{sec:ai-requirement}--\S\ref{sec:ai-workflow} describe the infrastructure: a remote, always-on environment built so that drafting and compilation did not depend on a personal workstation. \S\ref{sec:ai-editorial} describes the drafting process itself: the constraints placed on the writing agent and the division of labor between agent and author. \S\ref{sec:ai-limitations} states what neither guarantees.
+
+\section{Requirement}
+\label{sec:ai-requirement}
+
+The authoring environment had to remain available for the full drafting period without depending on a personal workstation being powered on, and had to be operable from a mobile device. Two consequences follow. First, both the compilation toolchain and the language-model agent must execute on always-on infrastructure rather than on the client. Second, the client is reduced to a thin interface: it issues instructions and reads output, and holds no state.
+
+Each subsequent layer resolves a constraint introduced by the one before it.
+
+\section{Execution host}
+\label{sec:ai-host}
+
+The host is a Lenovo ThinkPad T490 running Proxmox VE. A retired laptop is a deliberate choice for this workload: an integrated battery provides uninterruptible power, idle draw is on the order of ten watts, and the workload --- text editing and \LaTeX{} compilation --- is not compute-bound.
+
+Isolation uses an unprivileged LXC container rather than a virtual machine. Containers share the host kernel, so memory overhead and start-up latency are negligible, which matters because the container is expected to restart unattended. The container runs Debian 13 with two cores, 4\,GB of memory, and 20\,GB of storage; \texttt{nesting} is enabled so that a full \texttt{systemd} instance runs inside it, and \texttt{onboot} is set so the container is restored automatically after a host power cycle.
+
+Unprivileged containers do not expose \texttt{/dev/net/tun} by default, which the next layer requires. The device is bound in explicitly through the container configuration:
+
+\begin{verbatim}
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+\end{verbatim}
+
+Inside the container the device is owned by \texttt{nobody:nogroup}, an artefact of user-namespace identifier mapping; world-readable and world-writable permissions make it usable regardless.
+
+\section{Network layer}
+\label{sec:ai-network}
+
+The container must be reachable from arbitrary networks without exposing a service to the public Internet. This is achieved with Tailscale, a WireGuard-based overlay network. Each enrolled device receives a stable address in a private range and, through MagicDNS, a stable name; peers establish direct encrypted tunnels after NAT traversal, falling back to relays only when traversal fails. No port is forwarded on the residential router, and no service is exposed to unauthenticated clients.
+
+Tailscale's SSH mode is enabled, which delegates authentication to the overlay's identity layer and removes key distribution from the client entirely --- relevant because the client is a phone.
+
+The same layer serves the compiled artefact. The build directory is published over HTTPS within the overlay, so the rendered PDF can be opened in a mobile browser and refreshed after each compilation, without file synchronisation and without leaving the private network.
+
+\section{Session persistence}
+\label{sec:ai-persistence}
+
+The agent must survive client disconnection, which is the ordinary case: the client is a phone that sleeps, changes networks, and is closed for hours.
+
+Two mechanisms address this. The agent process is supervised by a \texttt{systemd} user service configured to restart unconditionally after a short delay, so transient failures and container reboots are recovered without intervention. Because \texttt{systemd} destroys a user's service manager when that user's last session ends, lingering is enabled for the account; this is the specific setting that decouples process lifetime from login lifetime, and without it the design fails at its central requirement.
+
+For interactive work outside the agent --- version control, compilation, inspection --- sessions are attached to a terminal multiplexer and reached over the overlay using Mosh, a UDP protocol that maintains session state across address changes and suspension. Plain SSH terminates on network change and is unsuitable for a mobile client.
+
+\section{Agent and toolchain}
+\label{sec:ai-toolchain}
+
+The agent is Claude Code, installed via its platform-native installer and run under an unprivileged account. Remote operation uses a synchronisation layer rather than remote compute: the process, the working tree, and all file operations remain on the container, and the mobile client receives only the conversation transcript. Consequently the agent's view of the project is identical whether it is driven from a terminal or from a phone.
+
+Two properties of this arrangement are worth recording. The transcript is retained on the vendor's infrastructure while a remote session is connected, which is a disclosure consideration for unpublished work. And a session whose host is unreachable for approximately ten minutes is terminated --- the supervision described in \S\ref{sec:ai-persistence} exists principally to absorb this.
+
+The document toolchain is \texttt{texlive} with \texttt{latexmk} as the build driver. Compilation is directed to a separate output directory, keeping generated artefacts disjoint from sources; version history is delegated to Git, and the output directory is excluded from it.
+
+Agent behaviour is constrained by a project-level instruction file committed to the repository. It specifies the build command, the document's structural conventions, the required register, and --- consequential for a mobile client --- an instruction to keep responses short and edits small. It further prohibits network access to external sources except on explicit instruction, and requires that any quantity appearing in the text be traceable to a recorded source rather than inferred. The file is version-controlled with the thesis, so the agent's operating context is reproducible alongside the document itself. \S\ref{sec:ai-editorial} states what this file enforces in full.
+
+\section{Resulting workflow}
+\label{sec:ai-workflow}
+
+A working session proceeds as follows: the author connects from a mobile client and issues an instruction; the agent edits sources within the container and compiles them; the author opens the resulting PDF over the overlay network, reviews it, and responds with revisions. The workstation is not involved at any point, and no component of the loop requires the client to remain connected between instructions.
+
+\section{Editorial governance and drafting workflow}
+\label{sec:ai-editorial}
+
+The environment described above supplies availability; it does not by itself constrain what the agent writes or how. That is the function of the instruction file introduced in \S\ref{sec:ai-toolchain}, \texttt{CLAUDE.md}, committed to the thesis repository and loaded into every session regardless of which client connects. This section states what it enforces.
+
+Repository layout is fixed by the instruction file rather than left to convention. All \LaTeX{} source lives under \texttt{tex/}; \texttt{main.tex} holds only the document class, packages, macros, and a sequence of \texttt{\textbackslash input\{\}} calls, and carries no prose. Each chapter is one file, named by document order (\texttt{01\_introduction.tex} through \texttt{05\_conclusions.tex}, this appendix as \texttt{06\_appendix.tex}), and a component file is not created without the author's authorization: the agent extends an existing chapter but does not add a new one unilaterally. \texttt{thesis\_planning\_document.md} is the authoritative outline; the agent follows it and flags disagreement rather than restructuring around it.
+
+Sourcing is a similarly explicit pipeline. \texttt{bib.md}, maintained by the author, is the sole record of what may be cited; the agent owns \texttt{tex/refs.bib} and generates entries from \texttt{bib.md}, but adds no reference absent from it. Citation keys follow a fixed \texttt{lastnameYEARkeyword} convention and, once used in the text, are never renamed. A claim that needs a source not present in \texttt{bib.md} is marked with a \texttt{\textbackslash todo\{cite\}} macro (defined in \texttt{main.tex}) rather than asserted. The same discipline extends to figures: any number appearing in the text must trace to \texttt{bib.md} or to \texttt{CLAUDE.md} itself, which is, for instance, the recorded source for the ColdRAG hyperparameter defaults in Table~\ref{tab:coldrag-hyperparams} --- entered as documented defaults, not as values measured in an experiment, because that is the only status \texttt{CLAUDE.md} claims for them.
+
+Two further constraints bound what the agent is permitted to assert. It is instructed not to infer implementation detail beyond what \texttt{CLAUDE.md} records, so a probable behaviour of unseen source code is not written as an established one; and it is instructed not to make network requests toward the reference implementations named in \texttt{CLAUDE.md} unless the author asks for one in that specific message, since permission granted in an earlier message does not carry forward.
+
+Completion is gated on compilation: an edit is not considered finished until \texttt{latexmk} rebuilds the document without error. Commits are scoped to one chapter or one meaningful revision, with a fixed message format (\texttt{<file>: <what changed>}), and published history is not rewritten.
+
+The remaining constraint concerns the interaction rather than the document. The agent addresses one component at a time and, when revising prose, proposes the paragraph rather than rewriting the surrounding file; the author reviews the compiled PDF over the network layer of \S\ref{sec:ai-network} and returns with directed changes. Every sentence in this document has passed through that loop: the agent drafts against a specification the author sets and a source record the author maintains, and the author remains the final editor of what that specification produces.
+
+\section{Limitations}
+\label{sec:ai-limitations}
+
+The host is a single machine without redundancy; a hardware failure ends availability, and the design relies on off-site Git replication rather than on fault tolerance. Recovery from vendor-side interruption is manual. Reviewing a compiled document on a small display is workable for prose but poor for figures and tables, which in practice were checked on a larger screen. The arrangement presumes the agent's transcript-retention behaviour is acceptable for the material; work under a stricter confidentiality regime would require the terminal-only path, which keeps all data within the overlay network. Finally, the governance described in \S\ref{sec:ai-editorial} is enforced by the instruction file's wording and by author review, not by a mechanism that prevents deviation from it; the reproducibility claimed for the environment in \S\ref{sec:ai-toolchain} is not a claim that every agent-drafted sentence in this document required no correction, only that the constraints under which it was drafted are recorded and inspectable alongside the document itself.
