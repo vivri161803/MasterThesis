@@ -217,8 +217,27 @@ translate terminology consistently and do not carry Italian phrasing across.
 - Never force-push, rebase, or amend published commits.
 - `build/` is gitignored.
 
+## LaTeX Lab
+
+A browser editor for this project runs on the same box, reachable over the
+tailnet only. Source lives in `~/latexlab`, which is its own git repository —
+see its README for the URL, the services and how to troubleshoot them.
+
+What this means when working here:
+
+- **Files in this repo may change outside a Claude turn.** I edit `.tex` files
+  in the browser directly. Do not assume the working tree is as you left it;
+  re-read a file before editing it if time has passed.
+- It compiles with exactly the command in the Build section above, into
+  `build/`. It never touches git.
+- Two Claude Code sessions can be live at once (Remote Control and the app's
+  terminal tab). Both edit these same files.
+
 ## Out of scope
 
-- Do not modify system config, systemd units, or Tailscale settings.
-- Do not install packages.
-- Do not touch anything outside this directory.
+- Do not modify system config, systemd units, or Tailscale settings, **except**
+  the `latexlab` and `latexlab-term` user units and the `tailscale serve`
+  routes that publish them.
+- Do not install packages. `~/latexlab/setup.sh` fetching its own vendored
+  assets is the one exception.
+- Do not touch anything outside this directory, **except** `~/latexlab`.
