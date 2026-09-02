@@ -230,8 +230,9 @@ What this means when working here:
   re-read a file before editing it if time has passed.
 - It compiles with exactly the command in the Build section above, into
   `build/`. It never touches git.
-- Two Claude Code sessions can be live at once (Remote Control and the app's
-  terminal tab). Both edit these same files.
+- The app has a Terminal tab: a plain shell in this directory. If I start
+  `claude` there it is a second, independent session from Remote Control, and
+  the two will overwrite each other's edits.
 
 ## Out of scope
 
