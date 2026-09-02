@@ -1,38 +1,286 @@
 \chapter{Conclusions}
 \label{ch:conclusions}
 
+\section{Results and evaluation}
+\label{sec:conclusions-results}
+
+
+\subsection{Methodological premise}
+\label{sec:results-premise}
+
+Neither repository publishes a quantitative accuracy benchmark. 
+
+\vspace{0.3cm}
+
+\texttt{dometria-bulk-insert} reports no measured extraction accuracy against a labeled test set, and ColdRAG reports no Recall, NDCG, hit-rate, or other recommendation-quality metric (\S\ref{sec:cf-content-hybrid}). This section does not manufacture either. It reports three kinds of evidence instead: 
+\begin{enumerate}
+\item \textbf{architectural validation}, that each system was built to its specified scope and runs,
+\item \textbf{observed behavior}, in the form of the illustrative figures each system's own documentation records, 
+\item the \textbf{evaluation instruments} each system was built with, together with what they measure. 
+\end{enumerate}
+It is explicit throughout about the difference between an instrument that exists and a result obtained with it. \S\ref{sec:results-limitations} returns to this premise directly, since the absence itself is a finding, not a gap in reporting.
+
+\subsection{dometria-bulk-insert}
+\label{sec:results-bulk-insert}
+
+\subsubsection{Evaluation tooling}
+\label{sec:results-bulk-insert-tooling}
+
+Two scripts instrument the extraction pipeline of \S\ref{sec:bulk-insert-block3}, and they measure different things.
+
+\begin{enumerate}
+\item \texttt{scripts/eval\_extraction.py} evaluates output at the level of the individual field, and is where the out-of-vocabulary-rate signal of \S\ref{sec:bulk-insert-normalization} surfaces: the proportion of populated fields whose value the closed vocabulary could not represent. A rising rate flags a vocabulary that has drifted from the documents it is meant to cover — a failure of the offline metadata compilation of \S\ref{sec:bulk-insert-metadata-compile}, not of the extraction call that encountered it.
+
+\item \texttt{scripts/measure\_variance.py} instead runs the same document through the pipeline $N$ times and compares the results, separating variance into two levels that the pipeline can fail at independently. 
+
+\emph{Schema-level agreement} asks whether Block~2 (\S\ref{sec:bulk-insert-block2}) selects the same contract on every run — a flip here changes which field set is even extracted, and is the more disruptive failure. 
+
+\emph{Field-level value drift} asks, given a fixed contract, how much an individual field's extracted value varies across runs. 
+
+The distinction matters because the two are not equally consequential: a schema flip invalidates the entire record, while value drift on one field leaves the rest intact. Separating them is what makes the non-determinism of \S\ref{sec:llm-limitations} — repeated calls to the same LLM are not guaranteed to return identical output even at zero temperature \citep{he2025defeating} — an observable, localized property of this specific pipeline rather than an unmeasured background risk. 
+
+The pipeline does pin its sampler: every LLM call is issued at temperature 0, with an optional fixed seed. What \texttt{measure\_variance.py} reports is therefore the residue that pinning the sampler does not remove, which is precisely the quantity a self-consistency mechanism (\S\ref{sec:bulk-insert-block3}) is there to absorb.
+
+\end{enumerate}
+
+Both scripts operate on runs the pipeline actually produces; \textbf{neither presupposes or requires ground-truth labels}. This is consistent with the absence noted in \S\ref{sec:results-premise}: the tooling measures self-consistency and vocabulary coverage, not accuracy against a reference.
+
+\subsubsection{Quality gates}
+\label{sec:results-bulk-insert-quality-gates}
+
+Independently of the runtime evaluation tooling, every commit is checked by a fixed gate run through 
+
+\texttt{pre-commit}:
+\begin{itemize}
+\item \texttt{ruff} for linting, 
+\item \texttt{mypy --strict} for static type checking, 
+\item \texttt{pytest} for the test suite. 
+\end{itemize}
+
+\begin{wrapfigure}{l}{0.25\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{5/hurdle.jpg}
+\end{wrapfigure}
+
+
+The suite mocks the Instructor client for its unit tests, so most of it runs without network access or an API key; a smaller set of integration tests is gated behind a \texttt{-m integration} marker and requires \texttt{OPENROUTER\_API\_KEY} to exercise the pipeline against a live model. This gate is a code-correctness check — it establishes that the pipeline runs and that its types are internally consistent — and is a different kind of evidence from the field- and schema-level instrumentation of \S\ref{sec:results-bulk-insert-tooling}, which characterizes what the pipeline outputs rather than whether it runs.
+
+This is \textbf{architectural validation} in the narrow sense of \S\ref{sec:results-premise}: the specified scope was built and is exercised on every commit. It carries no claim about extraction quality.
+
+\subsubsection{Illustrative response values}
+\label{sec:results-bulk-insert-illustrative}
+
+The \texttt{confidence} and \texttt{completeness} belong to the response contract of \S\ref{sec:bulk-insert-api}, not to an offline report: every record carries its own self-assessment, alongside the \texttt{flags} list recording agreement, grounding and normalization notes and the \texttt{review\_queue} of unfilled mandatory fields. 
+
+\vspace{0.3cm}
+
+A low score with a non-empty review queue routes the record to a human reviewer; it is not an error condition. Per-record quality assessment is thus a runtime output of the service rather than something measured about it afterwards — which is a different thing from an aggregate accuracy figure, and does not substitute for one.
+
+\vspace{0.3cm}
+
+The service's own mission documentation gives:
+\begin{itemize}
+\item \texttt{confidence: 0.82}  
+\item \texttt{completeness: 0.75} 
+\end{itemize}
+as example values in a \textbf{sample response}. 
+
+\vspace{0.3cm}
+
+These are illustrative: they demonstrate the shape and range of the response schema described in \S\ref{sec:bulk-insert-api}, not an aggregate measurement obtained by running the pipeline over a test corpus. No corpus-level average of either score is reported anywhere in the specification, and this thesis does not construct one.
+
+\subsection{ColdRAG}
+\label{sec:results-coldrag}
+
+\subsubsection{Performance instrumentation}
+\label{sec:results-coldrag-tracker}
+
+The \texttt{PerformanceTracker} introduced in \S\ref{sec:coldrag-stack} (\texttt{metrics.py}) instruments a request end to end: 
+\begin{itemize}
+\item wall-clock latency, 
+\item an estimated token count from a length-based heuristic — characters divided by four, not the model's own subword tokenizer (\S\ref{sec:transformer}) — so the figure approximates the unit in which cost is billed rather than reproducing it, 
+\item an estimated dollar cost derived from the configurable per-million-token input/output pricing already given in \S\ref{sec:coldrag-stack} (\$0.30 in / \$2.50 out by default), 
+\item throughput in tokens per second 
+\item a per-item latency is tracked alongside the aggregate figures where a request processes more than one item. 
+\end{itemize}
+
+At the end of a run, \texttt{print\_report()} emits a human-readable summary and returns a structured record — \texttt{\{elapsed\_time, total\_tokens\_estimated, cost\_dollars, tps\}} — so the same measurement is available both for inspection during development and for programmatic collection.
+
+\vspace{0.3cm}
+
+This instrumentation measures \textbf{cost and latency, not output quality}: it establishes what a request costs to run, not whether the candidates it returns are the right ones. It is the infrastructural counterpart to the accuracy figures \S\ref{sec:results-premise} notes are absent, and the two are not substitutes for each other.
+
+\subsubsection{Test suite}
+\label{sec:results-coldrag-tests}
+
+ColdRAG's Pytest suite (\texttt{tests/}, run via \texttt{uv run pytest tests/ -v}) covers two areas. 
+\begin{enumerate}
+\item \texttt{test\_models.py} exercises the Pydantic layer directly: the taxonomy-driven \texttt{RuleParser} of \S\ref{sec:coldrag-hitl}, the structure of the final confirmed payload, and deterministic product-identifier generation (\S\ref{sec:coldrag-ingestion}) — that hashing the same text twice yields the same identifier is a testable property, not only an architectural claim. 
+\item \texttt{test\_workflow.py} exercises the conversational module's event-driven control flow (\S\ref{sec:coldrag-hitl}): event transitions between workflow steps and session TTL behavior in Redis. 
+\end{enumerate}
+
+\vspace{0.3cm}
+
+As with the bulk-insert quality gate of \S\ref{sec:results-bulk-insert-quality-gates}, this suite verifies that the system behaves as specified; it does not measure retrieval or matching quality.
+
+\subsubsection{An illustrative end-to-end run}
+\label{sec:results-coldrag-run}
+
+One infrastructural run is reported in the system's documentation as an example of \texttt{PerformanceTracker} output, using the model \texttt{GPT-OSS-120b}: 
+\begin{itemize}
+\item 17.50~s elapsed, 
+\item 5 items processed, 
+\item approximately 1{,}200 tokens, 
+\item an estimated cost of \$0.00102, 
+\item a throughput of 68.57 tokens per second, and 3.50~s per item. 
+\end{itemize}
+
+As with the confidence and completeness values of \S\ref{sec:results-bulk-insert-illustrative}, this is a single sample presented to show what the instrumentation reports, not a benchmark result: no distribution over multiple runs or query types is given, and no claim of representativeness is made for it here.
+
+\subsection{Comparative synthesis and limits}
+\label{sec:results-synthesis}
+
+\subsubsection{Parallel Evaluation Structure}
+The two systems are evaluated by parallel but non-identical means. Both are checked by:
+
+\begin{itemize}
+\item a pre-commit-gated test suite establishing code correctness, 
+\item runtime instrumentation reporting on their own execution — variance and vocabulary coverage for \texttt{dometria-bulk-insert}, latency and cost for ColdRAG. 
+\end{itemize}
+
+\subsubsection{Is the output correct?}
+Neither instrument set measures the same thing across the two systems, because the systems address different problems: an extraction service is evaluated against how faithfully and consistently it transcribes a known document, while a retrieval system is evaluated against how well it ranks candidates against a query, a task for which no held-out relevance judgments exist here at all.
+
+\vspace{0.3cm}
+
+The two are complementary, not equivalent. Test suites answer \emph{does the system run correctly}; variance measurement answers \emph{is a given output stable across repetitions}; cost and latency tracking answers \emph{what does a request cost}. None of the three answers \emph{is the output correct}, and neither system's tooling was built to answer that question directly. Reproducibility instrumentation is, on its own terms, a substitute for correctness only up to a point: consistent output across runs (measured by \texttt{measure\_variance.py}, \S\ref{sec:results-bulk-insert-tooling}) rules out a specific failure mode — instability — without establishing that the stable value is the right one.
+
+\vspace{0.3cm}
+
+One design choice accounts for both absences. In both systems, verification sits inside the pipeline rather than after it: 
+\begin{itemize}
+\item self-consistency voting over mandatory field groups and a validator rejecting any unquoted value in \texttt{dometria-bulk-insert} (\S\ref{sec:bulk-insert-block3}), 
+\item evidence and logical checks before any write in ColdRAG's governance layer (\S\ref{sec:coldrag-ingestion}), 
+\item a quote-bounded LLM judge in the out-of-vocabulary resolver (\S\ref{sec:bulk-insert-normalization})
+\item the HITL module (\S\ref{sec:coldrag-hitl}). 
+\end{itemize}
+In-band validation rejects unsupported output at the point of generation, which reduces what an external harness would be needed to catch downstream. It also leaves no held-out record on which such a harness could be run: the evidence-grounded design of \S\ref{sec:evidence-grounded-principle} makes the pipelines defensible by construction and unbenchmarked by the same stroke.
+
+\subsection{Absence of formal benchmarks}
+\label{sec:results-limitations}
+
+No component of either system is evaluated here against a held-out, labeled ground truth. 
+
+\vspace{0.3cm}
+
+For \texttt{dometria-bulk-insert} this would mean field-level accuracy against manually annotated documents;
+
+\vspace{0.3cm}
+
+For ColdRAG it would mean a ranking metric such as Recall@$k$ or NDCG (\S\ref{sec:cf-content-hybrid}) against known correct matches, evaluated with the kind of reference-free or reference-based RAG evaluation frameworks surveyed in \S\ref{sec:rag} \citep{es2024ragas,chen2024benchmarking}. 
+
+\vspace{0.3cm}
+
+Neither exists for either system at the time of writing, and this thesis does not attempt to construct one post hoc: doing so without a properly constructed reference set and annotation protocol would produce a number without the validity a benchmark claim requires.
+
+\vspace{0.3cm}
+
+This is recorded here as a \textbf{limitation of the evaluation presented}, not of the systems themselves, and it is treated as a direction for future work in \S\ref{sec:conclusions-future-work} rather than as an omission here. What this section does establish is narrower and load-bearing in its own right: \textbf{both systems run}, are exercised by an automated test suite on every change, expose evaluation and instrumentation tooling purpose-built for the failure modes their own architecture makes possible — non-determinism and vocabulary drift for one, cost and latency for the other — and neither has been evaluated, here or in its own documentation, against a formal accuracy benchmark.
+
 \section{Objectives and how they were met}
 \label{sec:conclusions-summary}
 
 This thesis set out to document two systems built at Dometria AI against the two problems stated in \S\ref{sec:intro-problems}, and to state precisely what their evaluation establishes.
 
-Against the first problem — turning a heterogeneous document into a structured, comparable asset record — \texttt{dometria-bulk-insert} was built and is described in \S\ref{sec:bulk-insert}. It classifies a document to one of 97 contract types through a constrained LLM call followed by weighted embedding similarity, generates the corresponding Pydantic schema at runtime from a field tree unioned offline over those contracts, and extracts field values in per-topic groups with self-consistency voting over the mandatory ones. Trustworthiness, identified in \S\ref{sec:intro-problems} as the actual difficulty, is addressed structurally rather than by post-hoc checking: every populated field carries a verbatim quote and is rejected without one, every closed vocabulary offers an explicit abstention value, and arithmetic and cross-field values are computed in Python from transcribed primitives rather than requested from the model.
+\subsection{Knowledge extraction}
 
-Against the second problem — matching an asset that has no interaction history — ColdRAG was adapted to the real-estate off-market setting and is described in \S\ref{sec:coldrag-system}. Its ingestion pipeline, derived from DIAL-KG \citep{bao2026dial}, builds a knowledge graph in Neo4j through deterministic product-node creation, LLM entity extraction, vector-plus-judge named entity disambiguation, and a governance layer that rejects a proposed fact only when the source text contradicts it. Retrieval proceeds by multi-hop traversal with LLM edge scoring and threshold pruning, ranks candidates by blind match, and perturbs numeric metadata under $\varepsilon$-differential privacy before exposure. Demand-side input is acquired through a human-in-the-loop conversation validated turn by turn against a Pydantic model generated at runtime from the taxonomy.
+Against the first problem — turning a heterogeneous document into a structured, comparable asset record — \texttt{dometria-bulk-insert} was built and is described in \S\ref{sec:bulk-insert}. It classifies a document to one of \textbf{97} contract types through a constrained LLM call followed by weighted embedding similarity, generates the corresponding Pydantic schema at runtime from a field tree unioned offline over those contracts, and extracts field values in per-topic groups with self-consistency voting over the mandatory ones. 
 
-Both systems run, are exercised by a test suite on every commit, and carry instrumentation built for the failure modes their own architecture admits. What was not established is accuracy. Chapter~\ref{ch:results} reports evaluation instruments and illustrative figures, and reports no measured accuracy benchmark for either system, because neither system's documentation contains one and this thesis did not construct one post hoc (\S\ref{sec:results-limitations}). The objective of \S\ref{sec:intro-contributions} was met in the sense of design, implementation, and honest characterization; it was not met in the sense of demonstrated output quality, and \S\ref{sec:conclusions-limitations} treats that distinction as the central limitation of the work.
+\begin{wrapfigure}{r}{0.35\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{5/Objectives.png}
+\end{wrapfigure}
+
+
+\vspace{0.3cm}
+
+Trustworthiness, identified in \S\ref{sec:intro-problems} as the actual difficulty, is addressed structurally rather than by post-hoc checking: every populated field carries a verbatim quote and is rejected without one, every closed vocabulary offers an explicit abstention value, and arithmetic and cross-field values are computed in Python from transcribed primitives rather than requested from the model.
+
+\subsection{Cold start matching}
+
+Against the second problem — matching an asset that has no interaction history — ColdRAG was adapted to the real-estate off-market setting and is described in \S\ref{sec:coldrag-system}. Its ingestion pipeline, derived from DIAL-KG \citep{bao2026dial}, builds a knowledge graph in Neo4j through deterministic product-node creation, LLM entity extraction, vector-plus-judge named entity disambiguation, and a governance layer that rejects a proposed fact only when the source text contradicts it. 
+
+\vspace{0.3cm}
+
+Retrieval proceeds by multi-hop traversal with LLM edge scoring and threshold pruning, ranks candidates by blind match, and perturbs numeric metadata under $\varepsilon$-differential privacy before exposure. Demand-side input is acquired through a human-in-the-loop conversation validated turn by turn against a Pydantic model generated at runtime from the taxonomy.
+
+\subsection{Overall}
+
+Both systems run, are exercised by a test suite on every commit, and carry instrumentation built for the failure modes their own architecture admits. What was not established is accuracy. \S\ref{sec:conclusions-results} reports evaluation instruments and illustrative figures, and reports no measured accuracy benchmark for either system, because neither system's documentation contains one and this thesis did not construct one post hoc (\S\ref{sec:results-limitations}). 
+
+\vspace{0.3cm}
+
+The objective of \S\ref{sec:intro-contributions} was met in the sense of design, implementation, and honest characterization; it was not met in the sense of demonstrated output quality, and \S\ref{sec:conclusions-limitations} treats that distinction as the central limitation of the work.
 
 \section{Cross-project synthesis}
 \label{sec:conclusions-synthesis}
 
-The two systems address opposite ends of one data pipeline. \texttt{dometria-bulk-insert} operates on the supply side, converting the documents in which asset information arrives into records with a known schema; ColdRAG operates on the demand side, acquiring a counterparty's requirements conversationally and matching them against those records. Neither is useful alone in the setting of \S\ref{sec:intro-context}: matching has nothing to match on without structured records, and structured records serve no purpose in an off-market context that forbids publishing them.
+The two systems address opposite ends of one data pipeline. 
 
-They also share a method, and the sharing is more specific than a common stack. \emph{Transcribe-then-derive} (\S\ref{sec:evidence-grounded-principle}) appears in both at three different granularities. At field granularity, an extracted value without a supporting quote is rejected before the record is assembled (\S\ref{sec:bulk-insert-block3}). At edge granularity, a proposed graph relation is adjudicated against the text that produced it before it is written (\S\ref{sec:coldrag-ingestion}). At conversational-turn granularity, a payload is emitted only once every mandatory field has been extracted from something the user actually said and validated against the generated model (\S\ref{sec:coldrag-hitl}). In each case the LLM is asked to transcribe and the system decides, rather than the reverse.
+\vspace{0.3cm}
+
+\texttt{dometria-bulk-insert} operates on the supply side, converting the documents in which asset information arrives into records with a known schema. 
+
+\vspace{0.3cm}
+
+ColdRAG operates on the demand side, acquiring a counterparty's requirements conversationally and matching them against those records. 
+
+\vspace{0.3cm}
+
+Neither is useful alone in the setting of \S\ref{sec:intro-context}: matching has nothing to match on without structured records, and structured records serve no purpose in an off-market context that forbids publishing them.
+
+\vspace{0.3cm}
+
+They also share a method, and the sharing is more specific than a common stack. \emph{Transcribe-then-derive} (\S\ref{sec:evidence-grounded-principle}) appears in both at three different granularities:
+\begin{itemize}
+\item \textbf{field granularity}, an extracted value without a supporting quote is rejected before the record is assembled (\S\ref{sec:bulk-insert-block3}),
+\item \textbf{edge granularity}, a proposed graph relation is adjudicated against the text that produced it before it is written (\S\ref{sec:coldrag-ingestion})
+\item \textbf{conversational-turn granularity}, a payload is emitted only once every mandatory field has been extracted from something the user actually said and validated against the generated model (\S\ref{sec:coldrag-hitl}). 
+\end{itemize}
+In each case the LLM is asked to transcribe and the system decides, rather than the reverse.
+
+\vspace{0.3cm}
 
 A second commonality follows from the first. In both systems the schema is data rather than code: the extraction schema is derived from a field tree and a metadata sidecar compiled offline, the conversational schema from \texttt{rules.yaml}, and both are instantiated as Pydantic models at runtime. This is what makes the evidence gate enforceable uniformly — validation is ordinary Python running against a declared model (\S\ref{sec:structured-output}) — and it is also what makes retargeting a configuration change in principle rather than a rewrite.
 
-The consequence for evaluation was drawn in \S\ref{sec:results-synthesis} and is worth restating as a conclusion in its own right. Both systems place verification inside the pipeline rather than after it, which is what makes their output defensible by construction: an unsupported value does not reach the record or the graph to begin with. The same choice is why no held-out set exists on which an external harness could be run. The architecture that makes these systems trustworthy in the small is the architecture that leaves them unmeasured in the large.
+\vspace{0.3cm}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.5\linewidth]{5/synthesis.png}
+\end{figure}
+
+
+The consequence for evaluation was drawn in \S\ref{sec:results-synthesis} and is worth restating as a conclusion in its own right. \textbf{Both systems place verification inside the pipeline rather than after it}, which is what makes their output defensible by construction: an unsupported value does not reach the record or the graph to begin with. The same choice is why no held-out set exists on which an external harness could be run. The architecture that makes these systems trustworthy in the small is the architecture that leaves them unmeasured in the large.
+
+\vspace{0.3cm}
 
 One qualification belongs here rather than in the limitations. The pipeline described above is architectural, not yet wired: the two systems were built as separate services sharing a stack and a method, and ColdRAG currently ingests documents directly rather than consuming the records \texttt{dometria-bulk-insert} produces (\S\ref{sec:coldrag-ingestion}). Joining them is treated in \S\ref{sec:conclusions-future-work}.
 
 \section{Limitations}
 \label{sec:conclusions-limitations}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.25\linewidth]{5/limitation.jpg}
+\end{figure}
+
+
 \begin{itemize}
   \item \textbf{No accuracy benchmark.} Neither system has been evaluated against a held-out labeled reference — field-level accuracy for extraction, a ranking metric for matching (\S\ref{sec:results-limitations}). Nor has match quality been assessed by domain experts, which for a matching system is the judgment that ultimately matters. The instrumentation that does exist measures self-consistency, vocabulary coverage, latency, and cost, and none of these is a proxy for correctness.
   \item \textbf{Reproducibility is bounded, not achieved.} Every LLM call is issued at temperature 0 with an optional fixed seed, but identical prompts are not guaranteed to return identical output \citep{he2025defeating}. Self-consistency voting absorbs part of the residue and \texttt{measure\_variance.py} measures what remains (\S\ref{sec:results-bulk-insert-tooling}); neither removes it. ColdRAG has no equivalent variance instrument, so run-to-run stability of its rankings is uncharacterized.
   \item \textbf{Cost and latency scale with the number of LLM calls.} Extraction issues one call per topic group and more where voting applies; retrieval issues a query analysis, one edge-scoring pass per hop, and a final ranking pass, so a query's cost grows with how deep the multi-hop loop goes (\S\ref{sec:coldrag-inference}). The figures recorded in \S\ref{sec:results-coldrag-run} are illustrative of a single run and are not a cost model.
-  \item \textbf{Dependence on external model providers.} Both systems reach their models through a third-party gateway (\S\ref{sec:shared-stack}). This decouples the systems from any one vendor, but it also means model behaviour can change under a configuration that has not changed, which the current instrumentation would surface only as drift in downstream output.
+  \item \textbf{Dependence on external model providers.} Both systems reach their models through a third-party gateway (\S\ref{sec:shared-stack}). This decouples the systems from any one vendor, but it also means model behavior can change under a configuration that has not changed, which the current instrumentation would surface only as drift in downstream output.
   \item \textbf{Scope is one domain and one language.} The field tree derives from 97 Italian real-estate contract types and ColdRAG's taxonomy from a single \texttt{rules.yaml}. Domain-independence is a property of the architecture as described in \S\ref{sec:conclusions-synthesis}, not a demonstrated result: neither system has been retargeted to a second domain, so the claim remains untested.
   \item \textbf{The privacy guarantee is per-exposure.} The Laplace mechanism is applied to numeric metadata at the point of exposure at a fixed budget (\S\ref{sec:coldrag-privacy}). No accounting of that budget across successive queries or sessions is described in the system's specification, so the composition guarantee over a sequence of queries — which is the regime the re-identification risk of \S\ref{sec:blind-matching} actually arises in — is not established.
 \end{itemize}
@@ -40,10 +288,34 @@ One qualification belongs here rather than in the limitations. The pipeline desc
 \section{Future work}
 \label{sec:conclusions-future-work}
 
-\textbf{A formal benchmark against baselines.} The first limitation above is also the first priority, and the hard part is the reference set rather than the metric. Extraction requires documents annotated field by field; matching requires relevance judgments over asset-requirement pairs, against which Recall@$k$ or NDCG (\S\ref{sec:cf-content-hybrid}) and the reference-free RAG evaluation frameworks surveyed in \S\ref{sec:rag} could be applied \citep{es2024ragas,chen2024benchmarking}. Beyond an absolute figure, the measurements worth having are ablations of the design decisions this thesis argues for: multi-hop traversal against flat vector retrieval, to isolate what the graph contributes; and extraction with the evidence gate against extraction without it, to quantify what the gate costs in recall for what it buys in precision.
+\subsection{A formal benchmark against baselines}
 
-\textbf{Dynamic ingestion from a structured store.} Wiring ColdRAG's ingestion to consume the records \texttt{dometria-bulk-insert} emits — or a relational database holding them — would close the pipeline of \S\ref{sec:conclusions-synthesis}. The present separation means a document routed through both systems is extracted twice by two independent LLM pipelines, with no guarantee the two agree; consuming the audited record instead would make the graph's attributes exactly the ones that passed the evidence gate, and would remove one full extraction pass from the cost of onboarding an asset.
+The first limitation above is also the first priority, and the hard part is the reference set rather than the metric. Extraction requires documents annotated field by field; matching requires relevance judgments over asset-requirement pairs, against which Recall@$k$ or NDCG (\S\ref{sec:cf-content-hybrid}) and the reference-free RAG evaluation frameworks surveyed in \S\ref{sec:rag} could be applied \citep{es2024ragas,chen2024benchmarking}. 
 
-\textbf{Product lifecycle and deprecation.} Ingestion writes through \texttt{MERGE} and nothing described retires what it has written (\S\ref{sec:coldrag-ingestion}), so an asset that has been sold or withdrawn remains retrievable. Handling this requires more than deletion: entities shared with still-active products must survive their neighbour's removal, so the graph needs an explicit status on the product node, filtering at retrieval time, and a policy for entities left orphaned — a lifecycle interacting directly with the disambiguation logic that caused the sharing in the first place.
+\vspace{0.3cm}
 
-\textbf{Collaborative signal in the graph.} Cold start is a starting condition, not a permanent one. As the system is used, interactions accumulate, and knowledge-graph recommenders already propagate user preference over exactly this kind of attribute graph \citep{wang2019kgat,guo2022survey}, so recorded interactions could enter as edges rather than as a separate model — moving the system toward the hybrid of \S\ref{sec:cf-content-hybrid} \citep{burke2002hybrid} without abandoning the content-only path that must remain available for every newly ingested asset. This also supplies what the first item lacks: a confirmed match is a relevance judgment, and enough of them constitute the reference set against which the system could finally be measured.
+Beyond an absolute figure, the measurements worth having are ablations of the design decisions this thesis argues for: multi-hop traversal against flat vector retrieval, to isolate what the graph contributes; and extraction with the evidence gate against extraction without it, to quantify what the gate costs in recall for what it buys in precision.
+
+\subsection{Dynamic ingestion from a structured store}
+
+Wiring ColdRAG's ingestion to consume the records \texttt{dometria-bulk-insert} emits — or a relational database holding them — would close the pipeline of \S\ref{sec:conclusions-synthesis}. 
+
+\vspace{0.3cm}
+
+The present separation means a document routed through both systems is extracted twice by two independent LLM pipelines, with no guarantee the two agree; consuming the audited record instead would make the graph's attributes exactly the ones that passed the evidence gate, and would remove one full extraction pass from the cost of onboarding an asset.
+
+\subsection{Product lifecycle and deprecation}
+
+Ingestion writes through \texttt{MERGE} and nothing described retires what it has written (\S\ref{sec:coldrag-ingestion}), so an asset that has been sold or withdrawn remains retrievable. 
+
+\vspace{0.3cm}
+
+Handling this requires more than deletion: entities shared with still-active products must survive their neighbor's removal, so the graph needs an explicit status on the product node, filtering at retrieval time, and a policy for entities left orphaned — a lifecycle interacting directly with the disambiguation logic that caused the sharing in the first place.
+
+\subsection{Collaborative signal in the graph}
+
+Cold start is a starting condition, not a permanent one. As the system is used, interactions accumulate, and knowledge-graph recommenders already propagate user preference over exactly this kind of attribute graph \citep{wang2019kgat,guo2022survey}, so recorded interactions could enter as edges rather than as a separate model — moving the system toward the hybrid of \S\ref{sec:cf-content-hybrid} \citep{burke2002hybrid} without abandoning the content-only path that must remain available for every newly ingested asset. 
+
+\vspace{0.3cm}
+
+This also supplies what the first item lacks: a confirmed match is a relevance judgment, and enough of them constitute the reference set against which the system could finally be measured.
