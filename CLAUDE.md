@@ -19,6 +19,8 @@ phone via Remote Control, so responses are read on a small screen.
 thesis/
 ├── thesis_planning_document.md   # outline — the spec you write against
 ├── bib.md                        # source bibliography (articles to cite)
+├── images/                       # figures, one subdirectory per chapter
+│   └── 1/ 2/ 3/ 4/ 5/            # \graphicspath is {../images/}, so 3/foo.png
 ├── tex/                          # ALL LaTeX source lives here, nowhere else
 │   ├── main.tex                  # preamble + \input{} only, no prose
 │   ├── refs.bib                  # generated from bib.md

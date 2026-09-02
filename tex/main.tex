@@ -6,6 +6,9 @@
 \usepackage{amsmath} % numbered equations in the differential-privacy section
 \usepackage{natbib}
 \usepackage{url} % verbatim-safe \url{} for bibliography URLs (underscores, etc.)
+\usepackage{graphicx} % figures inserted from the LaTeX Lab toolbar
+\usepackage{wrapfig} % text-wrapped figures (left/right placement)
+\graphicspath{{../images/}} % compile runs in tex/, images live one level up
 
 % Inline marker for a claim still awaiting a source in bib.md.
 \newcommand{\todo}[1]{\textbf{[TODO: #1]}}
@@ -36,7 +39,6 @@ for Real-Estate Off-Market Intermediation}
 \input{01_introduction}
 \input{02_background}
 \input{03_systems}
-\input{04_results}
 \input{05_conclusions}
 
 \appendix
