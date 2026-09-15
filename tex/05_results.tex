@@ -7,7 +7,6 @@
 
 Neither repository publishes a quantitative accuracy benchmark. 
 
-\vspace{0.3cm}
 
 \texttt{dometria-bulk-insert} reports no measured extraction accuracy against a labeled test set, and ColdRAG reports no Recall, NDCG, hit-rate, or other recommendation-quality metric (\S\ref{sec:cf-content-hybrid}). This section does not manufacture either. It reports three kinds of evidence instead: 
 \begin{enumerate}
@@ -69,11 +68,9 @@ This is \textbf{architectural validation} in the narrow sense of \S\ref{sec:resu
 
 The \texttt{confidence} and \texttt{completeness} belong to the response contract of \S\ref{sec:bulk-insert-api}, not to an offline report: every record carries its own self-assessment, alongside the \texttt{flags} list recording agreement, grounding and normalization notes and the \texttt{review\_queue} of unfilled mandatory fields. 
 
-\vspace{0.3cm}
 
 A low score with a non-empty review queue routes the record to a human reviewer; it is not an error condition. Per-record quality assessment is thus a runtime output of the service rather than something measured about it afterwards — which is a different thing from an aggregate accuracy figure, and does not substitute for one.
 
-\vspace{0.3cm}
 
 The service's own mission documentation gives:
 \begin{itemize}
@@ -82,7 +79,6 @@ The service's own mission documentation gives:
 \end{itemize}
 as example values in a \textbf{sample response}. 
 
-\vspace{0.3cm}
 
 These are illustrative: they demonstrate the shape and range of the response schema described in \S\ref{sec:bulk-insert-api}, not an aggregate measurement obtained by running the pipeline over a test corpus. No corpus-level average of either score is reported anywhere in the specification, and this thesis does not construct one.
 
@@ -103,7 +99,6 @@ The \texttt{PerformanceTracker} introduced in \S\ref{sec:coldrag-stack} (\texttt
 
 At the end of a run, \texttt{print\_report()} emits a human-readable summary and returns a structured record — \texttt{\{elapsed\_time, total\_tokens\_estimated, cost\_dollars, tps\}} — so the same measurement is available both for inspection during development and for programmatic collection.
 
-\vspace{0.3cm}
 
 This instrumentation measures \textbf{cost and latency, not output quality}: it establishes what a request costs to run, not whether the candidates it returns are the right ones. It is the infrastructural counterpart to the accuracy figures \S\ref{sec:results-premise} notes are absent, and the two are not substitutes for each other.
 
@@ -116,7 +111,6 @@ ColdRAG's Pytest suite (\texttt{tests/}, run via \texttt{uv run pytest tests/ -v
 \item \texttt{test\_workflow.py} exercises the conversational module's event-driven control flow (\S\ref{sec:coldrag-hitl}): event transitions between workflow steps and session TTL behavior in Redis. 
 \end{enumerate}
 
-\vspace{0.3cm}
 
 As with the bulk-insert quality gate of \S\ref{sec:results-bulk-insert-quality-gates}, this suite verifies that the system behaves as specified; it does not measure retrieval or matching quality.
 
@@ -148,11 +142,9 @@ The two systems are evaluated by parallel but non-identical means. Both are chec
 \subsection{Is the output correct?}
 Neither instrument set measures the same thing across the two systems, because the systems address different problems: an extraction service is evaluated against how faithfully and consistently it transcribes a known document, while a retrieval system is evaluated against how well it ranks candidates against a query, a task for which no held-out relevance judgments exist here at all.
 
-\vspace{0.3cm}
 
 The two are complementary, not equivalent. Test suites answer \emph{does the system run correctly}; variance measurement answers \emph{is a given output stable across repetitions}; cost and latency tracking answers \emph{what does a request cost}. None of the three answers \emph{is the output correct}, and neither system's tooling was built to answer that question directly. Reproducibility instrumentation is, on its own terms, a substitute for correctness only up to a point: consistent output across runs (measured by \texttt{measure\_variance.py}, \S\ref{sec:results-bulk-insert-tooling}) rules out a specific failure mode — instability — without establishing that the stable value is the right one.
 
-\vspace{0.3cm}
 
 One design choice accounts for both absences. In both systems, verification sits inside the pipeline rather than after it: 
 \begin{itemize}
@@ -168,18 +160,14 @@ In-band validation rejects unsupported output at the point of generation, which 
 
 No component of either system is evaluated here against a held-out, labeled ground truth. 
 
-\vspace{0.3cm}
 
 For \texttt{dometria-bulk-insert} this would mean field-level accuracy against manually annotated documents;
 
-\vspace{0.3cm}
 
 For ColdRAG it would mean a ranking metric such as Recall@$k$ or NDCG (\S\ref{sec:cf-content-hybrid}) against known correct matches, evaluated with the kind of reference-free or reference-based RAG evaluation frameworks surveyed in \S\ref{sec:rag} \citep{es2024ragas,chen2024benchmarking}. 
 
-\vspace{0.3cm}
 
 Neither exists for either system at the time of writing, and this thesis does not attempt to construct one post hoc: doing so without a properly constructed reference set and annotation protocol would produce a number without the validity a benchmark claim requires.
 
-\vspace{0.3cm}
 
 This is recorded here as a \textbf{limitation of the evaluation presented}, not of the systems themselves, and it is treated as a direction for future work in \S\ref{sec:conclusions-future-work} rather than as an omission here. What this section does establish is narrower and load-bearing in its own right: \textbf{both systems run}, are exercised by an automated test suite on every change, expose evaluation and instrumentation tooling purpose-built for the failure modes their own architecture makes possible — non-determinism and vocabulary drift for one, cost and latency for the other — and neither has been evaluated, here or in its own documentation, against a formal accuracy benchmark.

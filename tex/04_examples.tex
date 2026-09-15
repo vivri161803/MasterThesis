@@ -8,13 +8,7 @@ Chapters~\ref{ch:background} and \ref{ch:systems} establish what the two systems
 
 Every input in this chapter is a real document and every schema, threshold, prompt instruction and code path it passes through is the one the implementation actually contains. The intermediate and final values, however, are \textbf{constructed}: they are worked out from the code and its artifacts rather than copied from a recorded execution. No run was performed to produce them.
 
-\vspace{0.3cm}
-
-This is a deliberate limitation and it bounds the reading. An example here demonstrates what the implemented pipeline does with a given input --- which fields its schema admits, which gate a value is tested against, which threshold decides whether an edge survives --- and it is checkable against the source. It is not evidence about how often the system gets an answer right, how stable its output is across repetitions, or how it behaves on documents unlike these. Those are measurements, this chapter contains none, and \S\ref{sec:results-premise} states separately why none exists.
-
-\vspace{0.3cm}
-
-Where a figure is a documented configuration default rather than something derived here, it is named as such, following Table~\ref{tab:coldrag-hyperparams}. Where a value would have to come from a run, it is marked rather than invented.
+This is a deliberate limitation and it bounds the reading. An example here demonstrates what the implemented pipeline does with a given input --- which fields its schema admits, which gate a value is tested against, which threshold decides whether an edge survives --- and it is checkable against the source. It is not evidence about how often the system gets an answer right, how stable its output is across repetitions, or how it behaves on documents unlike these. Those are measurements, this chapter contains none, and \S\ref{sec:results-premise} states separately why none exists. Where a figure is a documented configuration default rather than something derived here, it is named as such, following Table~\ref{tab:coldrag-hyperparams}. Where a value would have to come from a run, it is marked rather than invented.
 
 \section{A field profile of heterogeneous sources}
 \label{sec:examples-sources}

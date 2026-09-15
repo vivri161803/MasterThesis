@@ -6,7 +6,6 @@
 
 The value of a real-estate asset is a function of its attributes: surface areas, cadastral and legal status, condition, energy class, tenancy and income, location. 
 
-\vspace{0.3cm}
 
 Hedonic pricing formalizes this as a bundle of characteristics whose implicit prices are recoverable from market data \citep{rosen1974hedonic}, and the professional standards that govern valuation practice in Europe — RICS, IVS, EVS, and for Italy Tecnoborsa's \emph{Codice delle Valutazioni Immobiliari} \footnote{RICS: \emph{Royal Institution of Chartered Surveyors}, publisher of the
 ``Red Book'' (\url{https://www.rics.org}); IVS: \emph{International Valuation
@@ -15,7 +14,6 @@ Valuation Standards}, the TEGoVA ``Blue Book'' (\url{https://tegova.org}); the
 \emph{Codice delle Valutazioni Immobiliari} is the Italian standard published by
 Tecnoborsa (\url{https://www.tecnoborsa.com}).} — prescribe which attributes a valuation must report and on what basis \citep{royalinstitutionofcharteredsurveyors2024rics,internationalvaluationstandardscouncil2024international,tegova2025european,tecnoborsa2025codice}. Both presuppose that the attributes of an asset are \textbf{known and comparable} across other ones. In practice they are neither.
 
-\vspace{0.3cm}
 
 \begin{figure}[htbp]
   \centering
@@ -25,7 +23,6 @@ Tecnoborsa (\url{https://www.tecnoborsa.com}).} — prescribe which attributes a
 
 The attribute record does not really exist out of the box. It is \textbf{dispersed} across documents produced for other purposes and by different authors — deeds, cadastral extracts, appraisals, technical reports, lease agreements, marketing memoranda — written as prose, in Italian, in formats that vary by originator and by asset type. Assembling a comparable record from them is manual work repeated per asset, and it does not accumulate: two documents describing similar assets are organized differently, so the reconciliation has to be redone each time rather than reused.
 
-\vspace{0.3cm}
 
 Off-market intermediation removes what little structure a public listing would impose, posing the following structural problems:
 \begin{itemize}
@@ -33,15 +30,12 @@ Off-market intermediation removes what little structure a public listing would i
 \item the seller's identity, the asset's precise location, and the fact that a sale is contemplated are disclosed in stages, typically gated by a \textbf{non-disclosure agreement} (\S\ref{sec:blind-matching}). 
 \end{itemize}
 
-\vspace{0.3cm}
 
 The resulting information asymmetry is the condition Akerlof described: \textbf{the informed party cannot credibly disclose and the uninformed party cannot verify} \citep{akerlof1970market}. 
 
-\vspace{0.3cm}
 
 Here the asymmetry is deliberate rather than incidental, so the remedy cannot be disclosure. It has to be a matching process that operates on attributes without revealing the counterparty.
 
-\vspace{0.3cm}
 
 \begin{wrapfigure}{l}{0.45\textwidth}
   \centering
@@ -51,7 +45,6 @@ Here the asymmetry is deliberate rather than incidental, so the remedy cannot be
 
 Applied machine learning in the real estate domain has concentrated on price prediction, from hedonic regression to learned successors trained on listing or transaction data \citep{baldominos2018identifying,perezrave2019machine,zaki2022house,tekouabou2024ai}/ Recommendation in real estate has been surveyed separately \citep{henriquezmiranda2025recommender}, alongside broader treatments of the sector \citep{kuppan2024foundational}. 
 
-\vspace{0.3cm}
 
 What both lines of work take as given is a \textbf{structured dataset}. Neither addresses producing one from the documents in which the information actually resides, and both draw their signal from a transaction history that off-market assets, transacted once and confidentially, do not supply.
 
@@ -99,11 +92,9 @@ Off-market real estate is a limiting case of that condition:
 \subsection{The whole problem}
 The two problems are strictly linked together. Even if in by themselves they are challenging to solve, the complexity skyrockets when we start thinking about the whole pipeline: extraction, matching.
 
-\vspace{0.3cm}
 
 The established cold-start remedies substitute content signal for interaction signal but require a training stage over an existing interaction corpus, which is unavailable here. \textbf{Matching must proceed from extracted content alone}.
 
-\vspace{0.3cm}
 
 The two problems are consecutive rather than independent: the record produced by the first is the only signal available to the second. That dependency also constrains the first. An attribute extracted without support does not merely misdescribe one asset; it enters the knowledge graph the matching system reasons over, where it is indistinguishable from a supported one.
 
