@@ -1,3 +1,0 @@
-- cercare di rendere i concetti più omogenei tra loro (non è un problema del tono)
-- più che dividere la bibliografia, devi cercare di usare solo articoli pubblicati. Spesso quelli di arxiv hanno una versione pubblicata.
-- sul capitolo 4, più che un'idea su come testare (quello è un future work da mettere nelle conclusioni), io metterei degli esempi di esecuzione. Ad esempio, un'estrazione di feature dal testo, un matching, etc.. puoi anche mettere più esempi per componente sviluppato, magari facendo vedere anche i limiti dell' approccio.

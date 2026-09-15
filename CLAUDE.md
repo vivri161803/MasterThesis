@@ -4,7 +4,7 @@ Master's thesis in Data Science & AI, University of Florence. Written in
 **English**. The subject is the ColdRAG work (GraphRAG applied to matching)
 built for the Dometria project.
 
-`thesis_planning_document.md` is the authoritative outline. Follow it. If you
+`thesis_plan.md` is the authoritative outline. Follow it. If you
 believe it needs changing, say so and wait — do not restructure on your own.
 
 ## Environment
@@ -17,7 +17,7 @@ phone via Remote Control, so responses are read on a small screen.
 
 ```
 thesis/
-├── thesis_planning_document.md   # outline — the spec you write against
+├── thesis_plan.md                # outline — the spec you write against
 ├── bib.md                        # source bibliography (articles to cite)
 ├── images/                       # figures, one subdirectory per chapter
 │   └── 1/ 2/ 3/ 4/ 5/            # \graphicspath is {../images/}, so 3/foo.png
