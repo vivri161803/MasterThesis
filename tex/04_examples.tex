@@ -19,12 +19,193 @@ Where a figure is a documented configuration default rather than something deriv
 \section{A field profile of heterogeneous sources}
 \label{sec:examples-sources}
 
-\todo{property A --- source profile, image and audio front-end}
+\S\ref{sec:intro-context} claims that an asset's attribute record is dispersed across documents written for other purposes. This section makes that concrete on one asset, and in doing so fixes the input the rest of the chapter works from.
+
+\subsection{The asset}
+\label{sec:examples-property-a}
+
+Property~A is a three-room apartment in the Magliana Nuova district of Rome, offered through an agency listing. The listing text is the only document available here; it is reproduced in Appendix~\ref{ch:ai-appendix}'s companion role only insofar as it is quoted below, and every quotation in this chapter is verbatim from it.
+
+Read against the \texttt{Appartamento} contract of \S\ref{sec:examples-contract-a} --- 39 fields, of which 8 are mandatory --- the listing is informative about the interior and silent about almost everything an institutional record requires. Table~\ref{tab:property-a-coverage} separates the two.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{0.34\linewidth}p{0.55\linewidth}}
+\hline
+\textbf{Field} & \textbf{What the listing supports} \\
+\hline
+\multicolumn{2}{l}{\emph{Stated, transcribable}} \\
+\hline
+\texttt{..superficie\_commerciale\_mq} & 90, from ``ampio trilocale di 90mq'' \\
+\texttt{apartment\_piano} & 4, from ``posto al quarto piano'' \\
+\texttt{apartment\_ascensore} & true, from ``servito da ascensore'' \\
+\texttt{..portineria\_reception} & true, from ``servizio di portineria'' \\
+\texttt{..numero\_camere\_da\_letto} & 2, from ``due camere da letto'' \\
+\texttt{apartment\_numero\_bagni} & 1, from ``un bagno finestrato'' \\
+\texttt{..stato\_di\_conservazione} & \texttt{Buono}, from ``buono stato interno'' \\
+\hline
+\multicolumn{2}{l}{\emph{Stated, but not in the form the schema wants}} \\
+\hline
+\texttt{apartment\_numero\_vani} & ``trilocale'' implies 3; the number is never written \\
+\texttt{..balcone\_terrazzo\_mq} & two balconies are described; no area is given \\
+\texttt{..climatizzazione} & present in the master bedroom only, not the unit \\
+\texttt{..posto\_auto\_garage} & ``posti auto condominiali a rotazione'' --- shared and rotating, which none of \texttt{Sì} / \texttt{No} / \texttt{Possibilità di acquisto} expresses \\
+\hline
+\multicolumn{2}{l}{\emph{Absent --- and two of these are mandatory}} \\
+\hline
+\texttt{..prezzo\_richiesto\_eur} (mand.) & no price anywhere in the text \\
+\texttt{address\_line} (mand.) & district only, no street address \\
+\texttt{..classe\_energetica\_ape} & absent \\
+\texttt{..anno\_costruzione\_edificio} & absent \\
+\texttt{..spese\_condominiali\_annue\_eur} & absent \\
+\hline
+\end{tabular}
+\caption{Property~A against its contract. The listing is dense on interior description and empty on everything a valuation or a legal record depends on. The middle group is the interesting one: the information is present but not in the shape the field expects.}
+\label{tab:property-a-coverage}
+\end{table}
+
+\subsection{Where the missing attributes live}
+\label{sec:examples-source-fan-in}
+
+None of the absent attributes is unobtainable; each is simply recorded somewhere else, by someone else, in another medium. Table~\ref{tab:source-profile} profiles the sources a single asset is assembled from in this domain.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{0.19\linewidth}p{0.10\linewidth}p{0.30\linewidth}p{0.30\linewidth}}
+\hline
+\textbf{Source} & \textbf{Medium} & \textbf{Carries uniquely} & \textbf{Fails at} \\
+\hline
+Agency listing & text & condition, layout, exposure, the agent's reading of the asset & no price guarantee, no cadastral or legal data; marketing register \\
+Cadastral extract & text/PDF & \emph{foglio}, \emph{particella}, \emph{subalterno}, category, \emph{rendita} & says nothing descriptive or qualitative \\
+Energy certificate & PDF & class, kWh/m\textsuperscript{2}a & one attribute, and often stale \\
+Floor plan & image & room count, adjacency, per-room area & not text; areas are annotations on a drawing \\
+Photo set & image & finish level, state of repair, light & subjective, undated, unquantified \\
+Agent voice note & audio & off-market context: seller motivation, timing, price expectation & unstructured, unattributable, never written down \\
+\hline
+\end{tabular}
+\caption{The heterogeneous source profile of one asset. The two rightmost columns are the argument: no single source is sufficient, and the attribute that decides a match is often in the source least amenable to processing.}
+\label{tab:source-profile}
+\end{table}
+
+The same attribute recurs across sources at different precisions, and the discrepancies are not noise. A listing's ``90mq'' is commercial area computed by a convention the agency chooses; the floor plan's summed room areas are net walkable area; the cadastral extract's surface is a third figure computed for tax purposes. All three are correct, none is interchangeable, and a record that stores one without recording which convention produced it cannot be compared against another asset measured by a different one. Reconciling them is the work \S\ref{sec:bulk-insert} exists to do --- and, as \S\ref{sec:examples-limits} notes, the work it currently does only for the sources that arrive as text.
+
+\subsection{Image and audio sources: a front-end that does not exist}
+\label{sec:examples-multimodal}
+
+Both systems accept text. \texttt{POST /process} takes \texttt{\{id, text\}} (\S\ref{sec:bulk-insert-api}) and ColdRAG's ingestion reads a document string (\S\ref{sec:coldrag-ingestion}); neither has an image or audio path, and nothing in this thesis claims otherwise. The floor plan, the photo set and the voice note in Table~\ref{tab:source-profile} therefore contribute nothing to either pipeline as built.
+
+The extension that would admit them is a reduction to text ahead of Block~1, and it is worth stating precisely because the reduction is not neutral. Document-understanding models that consume page layout alongside token content --- LayoutLM and its successors, and the OCR-free encoder-decoder alternative --- are the established approach for the floor plan and the cadastral extract, where the spatial arrangement of a number on the page is what identifies which room or parcel it belongs to \citep{xu2020layoutlm,huang2022layoutlmv3,kim2022ocr}. A transcript from a voice note would arrive through automatic speech recognition \todo{cite}.
+
+Two consequences follow, and they are why this is described rather than built. First, the reduction introduces a second error source upstream of every guarantee the pipeline offers: the evidence quote of \S\ref{sec:bulk-insert-block3} would cite the transcript, not the artefact, so a field could be perfectly grounded in a faithful quote of a mis-transcribed number. The quote's authority is inherited from the assumption that the text is the document, and that assumption fails the moment the text is itself a model's output. Second, the audio case is worse than the image case, because an agent's spoken remark about a seller's motivation is not a property attribute at all --- it is unattributable hearsay that the schema has no field for and the evidence gate has no way to test. The front-end is named in \S\ref{sec:conclusions-future-work} as future work; it is named here as the boundary of what the examples below actually demonstrate.
+
 
 \section{Extraction: a document to a record}
 \label{sec:examples-extraction}
 
-\todo{Block 1 to the grounding gate, on a real listing}
+This section traces \texttt{dometria-bulk-insert} end to end. The input is not Property~A but a second document, \texttt{test.txt}, which ships with the repository: an Italian sale listing for a villa at Cisanello, in the municipality of Pisa. It is used here because it ships alongside \texttt{ground\_truth.txt}, a hand-authored statement of what the pipeline is expected to return from it --- including two cases deliberately planted to be got wrong. An expected output written by the system's author, before and independently of this chapter, is a firmer basis for judging the pipeline than any document chosen afterwards, and it is what makes \S\ref{sec:examples-limits} an assessment rather than an assertion.
+
+\subsection{Block 1 --- segmentation, chunking, scoring}
+\label{sec:examples-block1}
+
+The document is six paragraphs of running prose. The spaCy sentencizer yields ten sentences, and the sliding window of \texttt{CHUNK\_SIZE}~$=6$ with \texttt{CHUNK\_OVERLAP}~$=2$ --- a step of four --- produces three chunks: sentences 0--5, 4--9, and 8--9.
+
+One detail of the segmentation is worth recording, because it is visible in the output and is not a defect of the model. The pipeline runs a blank English pipeline with the rule-based sentencizer only (\S\ref{sec:bulk-insert-block1}), which splits on terminal punctuation. The source contains the parenthetical \emph{(rif.\ Legge 90 del 2013)}, and the abbreviation's full stop is taken as a sentence end, so \emph{Legge 90 del 2013)} becomes a sentence of its own. Nothing downstream requires sentences to be linguistically well formed --- they are only a unit for windowing --- but the fragment matters later: it is the span the second planted trap turns on, and it reaches the extractor detached from the clause that explains it.
+
+Each chunk then makes one call to the lightweight model returning a \texttt{ChunkAnalysis}: an integer relevance score and the chunk rewritten with coreferences resolved. On this document the resolution has real work to do, since the property is referred to as \emph{la proprietà}, \emph{l'immobile}, \emph{la struttura principale} and \emph{l'edificio} in turn. A representative rewrite:
+
+\begin{quote}\small
+\textbf{In:} ``L'immobile si presenta in buono stato generale ed è subito abitabile''\\
+\textbf{Out:} ``La Villa / Casolare in Via San Biagio 32 si presenta in buono stato generale ed è subito abitabile''
+\end{quote}
+
+\subsection{Block 2 --- which contract, and how nearly it went the other way}
+\label{sec:examples-contract-a}
+
+Chunks scoring below \texttt{CONTRACT\_MIN\_SCORE}~$=5$ are dropped and at most \texttt{CONTRACT\_TOP\_K}~$=5$ survive; all three pass here. The constrained level-1 call returns \texttt{real-estate}, which is unambiguous --- the document describes a physical property, not a business.
+
+Stage 2 is where the interest lies. Restricting to \texttt{real-estate} leaves 37 candidate leaves across three level-2 branches, each embedded as the Italian string \emph{level-2 name}~\texttt{>}~\emph{level-3 name}. Two of them are \texttt{Immobili residenziali di prestigio > Villa} and \texttt{Immobili residenziali di prestigio > Casale}. The document's first line is \emph{``In vendita affascinante Villa / Casolare''}: it names both, and \emph{casolare} and \emph{casale} are near-synonyms. The vote is decided between two labels the source text gives equal billing.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llcc}
+\hline
+\textbf{Candidate leaf} & \textbf{Voting chunk} & \textbf{Weight} & \textbf{Cumulative} \\
+\hline
+\texttt{...> Villa} & chunk 0, chunk 1 & 9, 8 & 17 \\
+\texttt{...> Casale} & chunk 2 & 6 & 6 \\
+\texttt{...> Palazzo} & --- & --- & 0 \\
+\hline
+\end{tabular}
+\caption{Constructed illustration of the Block~2 weighted vote on the villa document. Each chunk casts one vote, for its single highest-similarity label, carrying its Block~1 relevance score as weight. The scores are constructed, not recorded; what is not constructed is that \texttt{Villa} and \texttt{Casale} are sibling leaves competing for a document that names both.}
+\label{tab:block2-vote}
+\end{table}
+
+\texttt{Villa} wins, and contract 234 is selected. \S\ref{sec:examples-limits} returns to what happens when the weights fall the other way, because the consequence is not a mislabel: it is a different field set.
+
+\subsection{Block 3 --- the generated schema and the record}
+\label{sec:examples-block3-run}
+
+Contract 234 declares 37 fields. Four are removed before the schema is built --- \texttt{geo\_municipality\_id} as a \texttt{foreign\_id}, \texttt{latitude} and \texttt{longitude} as \texttt{decimal\_pair}, \texttt{country} as a non-text \texttt{native\_location} field --- leaving the extractable set, of which 8 are mandatory. \texttt{create\_model} builds the Pydantic model: each field paired with a \texttt{\{field\}\_quote}, each compiled enum widened to a \texttt{Literal} that also admits \texttt{NOT\_PRESENT} and \texttt{OUT\_OF\_VOCAB}.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{0.30\linewidth}p{0.13\linewidth}p{0.47\linewidth}}
+\hline
+\textbf{Field} & \textbf{Value} & \textbf{Paired quote} \\
+\hline
+\texttt{address\_line} & Via San Biagio 32 & ``si trova esattamente in Via San Biagio 32'' \\
+\texttt{locality} & Cisanello & ``nella tranquilla e ricercata località di Cisanello'' \\
+\texttt{municipality\_string} & Pisa & ``nel comune di Pisa'' \\
+\texttt{..prezzo\_richiesto\_eur} & 520000 & ``ribassato a 520.000 €'' \\
+\texttt{..superficie\_coperta\_mq} & 190 & ``una superficie coperta di 190 mq'' \\
+\texttt{..numero\_camere\_da\_letto} & 3 & ``complessivamente di 3 camere da letto'' \\
+\texttt{..stato\_di\_conservazione} & Buono & ``si presenta in buono stato generale'' \\
+\texttt{villa\_giardino\_mq} & 5000 & ``un parco esclusivo di oltre 5.000 mq'' \\
+\texttt{..garage\_posto\_auto\_n} & 2 & ``un ampio porticato \dots\ adibito a garage e un ulteriore posto auto scoperto'' \\
+\texttt{villa\_privacy\_isolamento} & Alto & ``libero su tre lati \dots\ altissimo livello di privacy'' \\
+\hline
+\end{tabular}
+\caption{Constructed extraction for the villa, against the values \texttt{ground\_truth.txt} states as expected. Every populated field carries the span it was read from; a field with a value and no span does not survive validation.}
+\label{tab:villa-record}
+\end{table}
+
+Three of these rows are doing more than transcription, and the pipeline treats them differently. \texttt{villa\_privacy\_isolamento} is a semantic reading of three separate phrases onto a three-valued scale, and its quote is the evidence for a judgement rather than a copy of a stated value. \texttt{villa\_garage\_posto\_auto\_n}~$=2$ is a count the document never states: it enumerates a \emph{porticato adibito a garage} and an \emph{ulteriore posto auto scoperto}, which is exactly the count/aggregate case of \S\ref{sec:bulk-insert-normalization} --- the model transcribes the two items with a quote each and the scalar is the length of that list, computed in Python. And \texttt{villa\_giardino\_mq}~$=5000$ is read from \emph{oltre 5.000}, a bound rather than a figure.
+
+\subsection{The two gates}
+\label{sec:examples-gates}
+
+The quote validator fires first and is purely structural. Suppose the model returns \texttt{real\_estate\_anno\_di\_costruzione\_epoca}~$=2013$ with an empty quote. Validation fails with the message the model then sees on retry:
+
+\begin{quote}\small\ttfamily
+Non-null fields missing a verbatim source quote: real\_estate\_anno\_di\_costruzione\_epoca. Provide the exact supporting text in each '\{field\}\_quote', or set the field to 'NOT\_PRESENT' if it is absent.
+\end{quote}
+
+The retry is bounded and the instruction names the abstention route explicitly, so the cheapest way for the model to satisfy the validator is to abstain rather than to invent a span. That is the design intent: the gate is easier to pass honestly than dishonestly.
+
+The grounding gate (\S\ref{sec:bulk-insert-grounding}) runs afterwards and asks the question the validator cannot: does the quote entail the value? Here the numeric exception earns its place. \texttt{villa\_giardino\_mq}~$=5000$ cited to \emph{``oltre 5.000 mq''} is not literally entailed --- the text says \emph{more than} five thousand --- and a strict judge would reject a correct transcription. The instruction lists this construction among those to accept, naming \emph{oltre}, \emph{circa}, \emph{almeno}, \emph{più di} and others, for numbers only. The field passes.
+
+\subsection{The two traps}
+\label{sec:examples-traps}
+
+\texttt{ground\_truth.txt} plants two values that a weak extractor will produce and that the correct answer is \texttt{null}.
+
+\textbf{Trap 1 --- a consumption figure read as a class.} The document states \emph{``un consumo energetico certificato di 177 kWh/m² anno''}. The field \texttt{real\_estate\_classe\_energetica\_ape} is a compiled enum over the APE letter classes, \texttt{A1} through \texttt{G}. The document reports energy performance and never states a class, so the expected value is abstention. The schema is what defends here: 177 is not a member of the \texttt{Literal}, so the model cannot return it even if it wants to, and its only options are a listed class or \texttt{NOT\_PRESENT}. A closed vocabulary with an abstention value converts a plausible extraction error into a type error. Had the field been free text, nothing in the pipeline would have stopped \emph{177 kWh/m²a} from being stored as an energy class.
+
+\textbf{Trap 2 --- a statutory reference read as a date.} The document ends a clause with \emph{``(rif.\ Legge 90 del 2013)''}, a citation of the Italian statute under which the certification was issued. \texttt{real\_estate\_anno\_di\_costruzione\_epoca} is typed \texttt{year}, so 2013 is perfectly well typed and the schema offers no protection at all. This trap must be caught semantically or not at all. It reaches the grounding gate as the pair $(2013$, \emph{``Legge 90 del 2013''}$)$, and the judge is asked whether that span entails that the building was constructed in 2013. It does not --- the quote is about a law, not a building --- so the verdict is fail, the field is nulled and flagged \texttt{ungrounded}.
+
+The contrast between the two traps is the point. Trap~1 is stopped by the schema, cheaply and deterministically, before any model judgement is involved. Trap~2 survives every structural check --- it is correctly typed, it has a genuine verbatim quote, and the quote does contain the number --- and is stopped only by a model asked a narrow entailment question. The evidence gate is not one mechanism but two, and only the weaker of them is deterministic.
+
+\subsection{Out of vocabulary, and the fields that do not fill}
+\label{sec:examples-oov-queue}
+
+The heating field shows the third sentinel doing its job. The document says \emph{``riscaldamento autonomo a gas naturale''}. The compiled vocabulary for \texttt{villa\_impianto\_riscaldamento} is \texttt{Aria}, \texttt{Misto}, \texttt{Pavimento}, \texttt{Pompa di calore}, \texttt{Radiatori} --- a vocabulary of \emph{distribution} methods, against a document describing \emph{fuel and autonomy}. No listed value fits, the information is plainly present, and \texttt{NOT\_PRESENT} would be a lie. The model returns \texttt{OUT\_OF\_VOCAB} with its quote, and the scoped judge of \S\ref{sec:bulk-insert-normalization} --- which sees the field description and that quote, never the document --- either finds a listed value that genuinely fits or emits faithful free text. This is not a model failure. It is the vocabulary being wrong for the corpus, and the sentinel is what makes that visible as a rate rather than invisible as a wrong answer.
+
+One mandatory field does not fill. \texttt{villa\_superficie\_terreno\_mq} is described in the sidecar as the total land area \emph{including garden, park and plots}; the only area in the document is the \emph{``parco esclusivo di oltre 5.000 mq''}, which has already been read into \texttt{villa\_giardino\_mq}. Whether the park is the whole plot or part of it, the document does not say. The extractor abstains, and the field is appended to the \texttt{review\_queue}: 7 of 8 mandatory fields filled, completeness $0.875$, and a \texttt{200} response carrying a record that a person is expected to finish. This is the correct outcome, and it is the one case in this chapter where the honest answer and the complete answer differ.
+
 
 \section{Matching: a requirement to a ranking}
 \label{sec:examples-matching}
