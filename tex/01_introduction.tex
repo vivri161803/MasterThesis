@@ -8,14 +8,19 @@ The value of a real-estate asset is a function of its attributes: surface areas,
 
 \vspace{0.3cm}
 
-Hedonic pricing formalizes this as a bundle of characteristics whose implicit prices are recoverable from market data \citep{rosen1974hedonic}, and the professional standards that govern valuation practice in Europe — RICS, IVS, EVS, and for Italy Tecnoborsa's \emph{Codice delle Valutazioni Immobiliari} — prescribe which attributes a valuation must report and on what basis \citep{royalinstitutionofcharteredsurveyors2024rics,internationalvaluationstandardscouncil2024international,tegova2025european,tecnoborsa2025codice}. Both presuppose that the attributes of an asset are \textbf{known and comparable} across other ones. In practice they are neither.
+Hedonic pricing formalizes this as a bundle of characteristics whose implicit prices are recoverable from market data \citep{rosen1974hedonic}, and the professional standards that govern valuation practice in Europe — RICS, IVS, EVS, and for Italy Tecnoborsa's \emph{Codice delle Valutazioni Immobiliari} \footnote{RICS: \emph{Royal Institution of Chartered Surveyors}, publisher of the
+``Red Book'' (\url{https://www.rics.org}); IVS: \emph{International Valuation
+Standards}, issued by the IVSC (\url{https://www.ivsc.org}); EVS: \emph{European
+Valuation Standards}, the TEGoVA ``Blue Book'' (\url{https://tegova.org}); the
+\emph{Codice delle Valutazioni Immobiliari} is the Italian standard published by
+Tecnoborsa (\url{https://www.tecnoborsa.com}).} — prescribe which attributes a valuation must report and on what basis \citep{royalinstitutionofcharteredsurveyors2024rics,internationalvaluationstandardscouncil2024international,tegova2025european,tecnoborsa2025codice}. Both presuppose that the attributes of an asset are \textbf{known and comparable} across other ones. In practice they are neither.
 
 \vspace{0.3cm}
 
-\begin{wrapfigure}{r}{0.45\textwidth}
+\begin{figure}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{1/heterogeneousDataSource.jpg}
-\end{wrapfigure}
+  \includegraphics[width=0.5\linewidth]{1/heterogeneousDataSource.jpg}
+\end{figure}
 
 
 The attribute record does not really exist out of the box. It is \textbf{dispersed} across documents produced for other purposes and by different authors — deeds, cadastral extracts, appraisals, technical reports, lease agreements, marketing memoranda — written as prose, in Italian, in formats that vary by originator and by asset type. Assembling a comparable record from them is manual work repeated per asset, and it does not accumulate: two documents describing similar assets are organized differently, so the reconciliation has to be redone each time rather than reused.
@@ -50,24 +55,39 @@ Applied machine learning in the real estate domain has concentrated on price pre
 
 What both lines of work take as given is a \textbf{structured dataset}. Neither addresses producing one from the documents in which the information actually resides, and both draw their signal from a transaction history that off-market assets, transacted once and confidentially, do not supply.
 
-\section{The two problems addressed}
-\label{sec:intro-problems}
+This thesis proposes a general agentic pipeline: 
+\begin{itemize}
+  \item Heterogeneous information extraction,
+  \item Matching algorithm.
+\end{itemize}
+
+\section{Dometria AI}
+\label{sec:intro-dometria}
+
+Before getting to the gist of the problem, some presentations are needed, because this whole project took place here
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.4\linewidth]{1/KnowlExt.png}
+  \includegraphics[width=0.6\linewidth]{1/Dometria.jpeg}
 \end{figure}
+
+Dometria IA originates from the REAL project at Scuola Superiore Sant'Anna in Pisa. It is organized around two technological cores:
+\begin{itemize}
+\item \emph{Value}, concerned with the valuation of an asset,
+\item \emph{Connect}, concerned with matching supply and demand. 
+
+\end{itemize}
+
+Both rest on the same precondition — a structured, comparable record for every asset — and neither is served directly by the document forms in which that information arrives. The work described in this thesis was carried out at Dometria AI and addresses the two ends of that data pipeline: \textbf{producing the record, and matching on it}.
+
+\section{The two problems addressed}
+\label{sec:intro-problems}
 
 \subsection{Precise knowledge extraction}
 The first problem is to turn a heterogeneous document into a structured asset record whose schema depends on what kind of asset the document describes. The difficulty is not extraction as such — schema-constrained extraction from an LLM is an established technique (\S\ref{sec:structured-output}) — but trustworthiness. An attribute extracted incorrectly is worse than one left empty, because it propagates silently into a valuation or a match with no signal that it should be checked. LLMs hallucinate (\S\ref{sec:llm-limitations}), and repeated calls with identical prompts at temperature zero are not guaranteed to agree \citep{he2025defeating}. A pipeline whose output feeds a financial decision therefore has to make every value auditable against its source and has to be able to abstain rather than guess.
 
 \subsection{Cold start matching}
 The second problem is to recommend an asset that has no interaction history. Collaborative filtering derives its signal entirely from a user-item interaction matrix (\S\ref{sec:cf-content-hybrid}), so a newly ingested asset contributes nothing to it — the item cold-start condition (\S\ref{sec:item-vs-user-coldstart}). 
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.4\linewidth]{1/ColdStart.jpg}
-\end{figure}
 
 Off-market real estate is a limiting case of that condition: 
 \begin{itemize}
@@ -93,7 +113,7 @@ The two problems are consecutive rather than independent: the record produced by
 The objective of this thesis is to document the design, implementation, and evaluation of two systems built at Dometria AI to address these problems, and to state precisely what their evaluation does and does not establish. The contributions are the following.
 
 \begin{itemize}
-  \item \texttt{dometria-bulk-insert}, a stateless synchronous extraction microservice that turns a document into a structured, evidence-grounded asset record (\S\ref{sec:bulk-insert}). Its extraction stage selects a product schema by traversing a three-level category tree, generates the corresponding Pydantic model at runtime from a field tree unioned offline over 97 contract types, pairs every field with a verbatim quote and rejects any populated field lacking one, gives every closed vocabulary an explicit abstention value, and computes arithmetic and cross-field values in code rather than requesting them from the model.
+  \item Bulk information extraction pipeline (\texttt{dometria-bulk-insert}), a stateless synchronous extraction microservice that turns a document into a structured, evidence-grounded asset record (\S\ref{sec:bulk-insert}). Its extraction stage selects a product schema by traversing a three-level category tree, generates the corresponding Pydantic model at runtime from a field tree unioned offline over 97 contract types, pairs every field with a verbatim quote and rejects any populated field lacking one, gives every closed vocabulary an explicit abstention value, and computes arithmetic and cross-field values in code rather than requesting them from the model.
   \item ColdRAG, a graph-augmented retrieval system that matches assets under item cold-start (\S\ref{sec:coldrag-system}). It adapts the ColdRAG framework \citep{yang2025adaptive} to the real-estate off-market setting, builds its knowledge graph through an ingestion pipeline derived from DIAL-KG \citep{bao2026dial} with named entity disambiguation and a conservative governance layer, retrieves candidates through a multi-hop loop with LLM edge scoring and threshold pruning, anonymizes numeric metadata under $\varepsilon$-differential privacy before exposing it, and acquires structured demand-side input through a human-in-the-loop conversational module validated against runtime-generated Pydantic models.
   \item The articulation of one methodological principle shared by both systems, \emph{transcribe-then-derive} (\S\ref{sec:evidence-grounded-principle}): the LLM transcribes evidence and never computes a final value, and every value requiring computation or cross-referencing is derived afterwards in ordinary code from what was transcribed.
   \item An account of the evaluation instrumentation each system provides — variance and out-of-vocabulary measurement for one, latency and cost tracking for the other — and an explicit statement of what it does not provide.
@@ -104,23 +124,6 @@ Two limits of scope are stated at the outset:
 \item these solutions do not have direct comparicons in the real estate market. Obviously, direct benchmarks are private and business relevant,
 \item the ColdRAG system described here is a domain-specific adaptation of the published framework rather than its authors' implementation, which is maintained separately (\S\ref{sec:coldrag-paper}).
 \end{enumerate}
-
-\section{Dometria AI}
-\label{sec:intro-dometria}
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.6\linewidth]{1/Dometria.jpeg}
-\end{figure}
-
-Dometria AI originates from the REAL project at Scuola Superiore Sant'Anna in Pisa. It is organized around two technological cores:
-\begin{itemize}
-\item \emph{Value}, concerned with the valuation of an asset,
-\item \emph{Connect}, concerned with matching supply and demand. 
-
-\end{itemize}
-
-Both rest on the same precondition — a structured, comparable record for every asset — and neither is served directly by the document forms in which that information arrives. The work described in this thesis was carried out at Dometria AI and addresses the two ends of that data pipeline: \textbf{producing the record, and matching on it}.
 
 \section{Structure of the thesis}
 \label{sec:intro-structure}
