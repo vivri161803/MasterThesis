@@ -1,4 +1,42 @@
 \chapter{Worked Examples}
 \label{ch:examples}
 
-\todo{chapter under construction}
+Chapters~\ref{ch:background} and \ref{ch:systems} establish what the two systems are built from and how they are put together. Neither shows either system doing anything. This chapter does: it follows real documents through the pipelines of \S\ref{sec:bulk-insert} and \S\ref{sec:coldrag-system} and reports, stage by stage, what each stage receives and what it produces. \S\ref{sec:examples-sources} sets out the source material an asset actually arrives as. \S\ref{sec:examples-extraction} traces extraction, \S\ref{sec:examples-matching} traces matching, and \S\ref{sec:examples-e2e} carries one asset through both. \S\ref{sec:examples-limits} reports the cases where the output is wrong or unusable, which is the part of this chapter that constrains what Chapter~\ref{sec:conclusions-results} is entitled to claim.
+
+\section{What these examples are, and what they are not}
+\label{sec:examples-premise}
+
+Every input in this chapter is a real document and every schema, threshold, prompt instruction and code path it passes through is the one the implementation actually contains. The intermediate and final values, however, are \textbf{constructed}: they are worked out from the code and its artifacts rather than copied from a recorded execution. No run was performed to produce them.
+
+\vspace{0.3cm}
+
+This is a deliberate limitation and it bounds the reading. An example here demonstrates what the implemented pipeline does with a given input --- which fields its schema admits, which gate a value is tested against, which threshold decides whether an edge survives --- and it is checkable against the source. It is not evidence about how often the system gets an answer right, how stable its output is across repetitions, or how it behaves on documents unlike these. Those are measurements, this chapter contains none, and \S\ref{sec:results-premise} states separately why none exists.
+
+\vspace{0.3cm}
+
+Where a figure is a documented configuration default rather than something derived here, it is named as such, following Table~\ref{tab:coldrag-hyperparams}. Where a value would have to come from a run, it is marked rather than invented.
+
+\section{A field profile of heterogeneous sources}
+\label{sec:examples-sources}
+
+\todo{property A --- source profile, image and audio front-end}
+
+\section{Extraction: a document to a record}
+\label{sec:examples-extraction}
+
+\todo{Block 1 to the grounding gate, on a real listing}
+
+\section{Matching: a requirement to a ranking}
+\label{sec:examples-matching}
+
+\todo{query analysis, hop-0, one full hop, blind ranking, perturbed exposure}
+
+\section{End to end: one asset through both systems}
+\label{sec:examples-e2e}
+
+\todo{property B --- extraction to ingestion to retrieval}
+
+\section{Where the approaches fail}
+\label{sec:examples-limits}
+
+\todo{the planted traps, and the five structural limits}
