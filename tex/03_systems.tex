@@ -1,7 +1,7 @@
 \chapter{Systems Developed}
 \label{ch:systems}
 
-This chapter describes what was built. It assumes the concepts and prior work of Chapter~\ref{ch:background} and does not restate them; every non-obvious design choice is instead traced back to the section of Chapter~\ref{ch:background} that motivates it. The chapter covers two systems built at Dometria AI. \S\ref{sec:shared-stack} and \S\ref{sec:evidence-grounded-principle} state what the two systems share. \S\ref{sec:bulk-insert} describes \texttt{dometria-bulk-insert}, a stateless extraction microservice that turns heterogeneous real-estate documents into structured, evidence-grounded asset records. \S\ref{sec:coldrag-system} describes ColdRAG, the graph-augmented retrieval system that matches those records under item cold-start.
+This chapter\footnote{All the images in this chapter were Ai generated using Nano Banana 2} describes what was built. It assumes the concepts and prior work of Chapter~\ref{ch:background} and does not restate them; every non-obvious design choice is instead traced back to the section of Chapter~\ref{ch:background} that motivates it. The chapter covers two systems built at Dometria AI. \S\ref{sec:shared-stack} and \S\ref{sec:evidence-grounded-principle} state what the two systems share. \S\ref{sec:bulk-insert} describes \texttt{dometria-bulk-insert}, a stateless extraction microservice that turns heterogeneous real-estate documents into structured, evidence-grounded asset records. \S\ref{sec:coldrag-system} describes ColdRAG, the graph-augmented retrieval system that matches those records under item cold-start.
 
 \section{Common Overview}
 \label{sec:shared-overview}
@@ -19,7 +19,7 @@ Both systems apply the same response to the hallucination risk of \S\ref{sec:llm
 \section{Part A --- \texttt{dometria-bulk-insert}}
 \label{sec:bulk-insert}
 
-\texttt{dometria-bulk-insert} is a stateless synchronous extraction microservice. It takes one document and returns one structured asset record: a request carries an identifier and a text; the response carries a fully populated asset object, a confidence score, a completeness score, and the model identifiers used to produce it. The service holds no persistent state of its own — nothing survives one request to the next in the same process — so scaling is horizontal: more replicas behind a load balancer, not more concurrency inside one process. This design choice is examined in \S\ref{sec:bulk-insert-api}.
+This module: \texttt{dometria-bulk-insert} is a stateless synchronous extraction microservice (figure~\ref{fig:bulk-insert-pipeline}). It takes one document and returns one structured asset record: a request carries an identifier and a text; the response carries a fully populated asset object, a confidence score, a completeness score, and the model identifiers used to produce it. The service holds no persistent state of its own — nothing survives one request to the next in the same process — so scaling is horizontal: more replicas behind a load balancer, not more concurrency inside one process. This design choice is examined in \S\ref{sec:bulk-insert-api}.
 
 \subsection{Interface and service contract}
 \label{sec:bulk-insert-api}
@@ -42,7 +42,7 @@ The first stage segments the input document into sentences with spaCy, using a b
 
 Contract matching proceeds in two stages against a fixed, three-level category tree of 97 leaf contracts, spanning 3 root macro-categories and 12 intermediate categories. The first stage is a single constrained call to the lightweight LLM that selects one of the 3 root macro-categories. 
 
-The second stage selects the (level-2, level-3) leaf. Not every chunk participates: those scoring below \texttt{CONTRACT\_MIN\_SCORE} (default 5) are discarded, and at most the \texttt{CONTRACT\_TOP\_K} (default 5) highest-scoring of the remainder are retained, so the vote is taken over the passages Block~1 judged informative rather than over the whole document. Each retained chunk is embedded with the multilingual, distilled sentence-embedding model \texttt{paraphrase-multilingual-MiniLM-L12-v2} (384-dimensional; \S\ref{sec:embedding-models}) \citep{reimers2026sentence} and compared by cosine similarity against the embeddings of the candidate leaf labels, each label rendered as the Italian string \emph{level-2 name}~\texttt{>}~\emph{level-3 name}. A chunk casts a single vote for its highest-similarity label, carrying its Block~1 relevance score as the vote's weight; the leaf with the greatest cumulative weight wins, ties broken by the highest single-chunk similarity any one chunk gave it. 
+The second stage selects the (level-2, level-3) leaf. Not every chunk participates: those scoring below \texttt{CONTRACT\_MIN\_SCORE} (default 5) are discarded, and at most the \texttt{CONTRACT\_TOP\_K} (default 5) highest-scoring of the remainder are retained, so the vote is taken over the passages Block~1 judged informative rather than over the whole document. Each retained chunk is embedded with the multilingual, distilled sentence-embedding model \texttt{MiniLM-L12-v2} (384-dimensional; \S\ref{sec:embedding-models}) \citep{reimers2026sentence} and compared by cosine similarity against the embeddings of the candidate leaf labels, each label rendered as the Italian string \emph{level-2 name}~\texttt{>}~\emph{level-3 name}. A chunk casts a single vote for its highest-similarity label, carrying its Block~1 relevance score as the vote's weight; the leaf with the greatest cumulative weight wins, ties broken by the highest single-chunk similarity any one chunk gave it. 
 
 The tree itself — root, intermediate, and leaf categories, and the ancestry between them — is a plain nested dictionary traversed at lookup time. An earlier design used a dedicated knowledge-graph engine for this matching step; it was removed as disproportionate to a fixed, shallow, three-level structure that a nested-dictionary lookup expresses directly, and no traversal beyond ancestor/descendant lookup was ever required of it.
 
@@ -55,34 +55,11 @@ Fields are partitioned by a \texttt{topic} tag and extracted in one sequential p
 
 Finally, values that require computation rather than transcription are never requested from the extraction model. Arithmetic and cross-field values are computed in Python from already-transcribed primitives (\texttt{computed} fields); a small number of fields that genuinely require reasoning over already-extracted content (\texttt{judged} fields) are resolved with an isolated second LLM call that receives only the relevant primitives and their quotes, never the source document. Where a \texttt{computed} field's target was also extracted directly from the text, a reconciliation pass cross-checks the two and raises a flag on disagreement, which is a consistency check obtained at no additional model cost. Both derivation passes are implemented but inert on the artifacts the service currently ships: all 1083 fields in the metadata sidecar carry a null derivation rule, so no field is computed or judged until an offline step populates one. The mechanism is in place; the rules are not yet written. The count/aggregate rule of \S\ref{sec:bulk-insert-normalization} is seeded independently of this and does fire, on the 175 fields that declare one. Field metadata — enum vocabularies, descriptions, topics, priorities, and derivation rules — lives in an editable \texttt{field\_metadata.yaml} sidecar populated offline (\S\ref{sec:bulk-insert-metadata-compile}); a field not yet compiled is treated as free text pending compilation.
 
-
 \begin{figure}[htbp]
-\centering
-\figplaceholder[0.34\textheight]{Figure placeholder --- the
-\texttt{dometria-bulk-insert} block chain. A left-to-right flow:
-\{id, text\} $\rightarrow$ \textbf{Block 1} (spaCy sentencizer $\rightarrow$
-sliding window, 6 sentences with 2 overlapping $\rightarrow$ one lightweight-LLM
-call per chunk returning a 1--10 relevance score and the coreference-resolved
-text) $\rightarrow$ \textbf{Block 2} (chunks filtered at score $\geq 5$ and
-cut to the top 5; a constrained lightweight call fixes the level-1
-macro-category; weighted cosine vote over the candidate level-2/level-3 labels
-picks the leaf) $\rightarrow$ \textbf{Block 3} (the leaf selects its fields
-from the offline field tree; \texttt{create\_model} builds the Pydantic schema;
-per-topic extraction calls to the heavy model, with self-consistency voting on
-the mandatory and high-priority groups) $\rightarrow$ \textbf{finishing}
-(normalization, \texttt{OUT\_OF\_VOCAB} resolution, count/aggregate,
-derivation) $\rightarrow$ \textbf{grounding gate} (batched entailment judge)
-$\rightarrow$ \{asset, confidence, completeness\}. Mark the two in-band gates
-distinctly: the quote validator inside Block 3, which loops back to Block 3 as
-an Instructor retry, and the grounding gate, whose failures null a field rather
-than retrying it. Mark the offline artifacts --- field tree, product manifests,
-metadata sidecar, topic table --- as inputs read at request time but built by a
-separate build-time path.}
-\caption{The extraction pipeline. Each block narrows what the next one is
-allowed to consider: Block~1 decides which passages matter, Block~2 which
-schema applies, Block~3 which fields that schema contains. The two gates marked
-in the figure are the points at which an unsupported value is refused.}
-\label{fig:bulk-insert-pipeline}
+  \centering
+  \includegraphics[width=1\linewidth]{3/Gemini_Generated_Image_2t6bs42t6bs42t6b.jpg}
+  \caption{The extraction pipeline. Each block narrows what the next one is allowed to consider: Block~1 decides which passages matter, Block~2 which schema applies, Block~3 which fields that schema contains. The two gates marked in the figure are the points at which an unsupported value is refused.}
+  \label{fig:bulk-insert-pipeline}
 \end{figure}
 
 \subsection{Post-extraction record finishing}
@@ -127,12 +104,19 @@ Beyond the \texttt{PipelineError} category mapping of \S\ref{sec:bulk-insert-api
 \subsection{Containerization}
 \label{sec:bulk-insert-containerization}
 
-The service ships as a single multi-stage Docker image, roughly 2.5~GB, CPU-only \citep{merkel2014docker}. The embedding model and the \texttt{contracts/} directory of 97 per-leaf JSON schema files are baked into the image rather than fetched at startup, so a container reaches readiness (\S\ref{sec:bulk-insert-api}) without any network dependency beyond the OpenRouter calls it makes per request; only the OpenRouter API key is injected at runtime. Horizontal scaling — how many replicas run behind what load balancer or autoscaler — is a deployment-platform concern outside this image's own configuration surface, consistent with the architectural choice described in \S\ref{sec:bulk-insert-api}.
+The service ships as a single multi-stage Docker image (figure~\ref{fig:bulkcontainer}), roughly 2.5~GB, CPU-only \citep{merkel2014docker}. The embedding model and the \texttt{contracts/} directory of 97 per-leaf JSON schema files are baked into the image rather than fetched at startup, so a container reaches readiness (\S\ref{sec:bulk-insert-api}) without any network dependency beyond the OpenRouter calls it makes per request; only the OpenRouter API key is injected at runtime. Horizontal scaling — how many replicas run behind what load balancer or autoscaler — is a deployment-platform concern outside this image's own configuration surface, consistent with the architectural choice described in \S\ref{sec:bulk-insert-api}.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1\linewidth]{3/Gemini_Generated_Image_xhfl2uxhfl2uxhfl.jpg}
+  \caption{Container mapping and deployment strategy}
+  \label{fig:bulkcontainer}
+\end{figure}
 
 \section{Part B --- ColdRAG}
 \label{sec:coldrag-system}
 
-ColdRAG is the graph-augmented matching system this thesis's title refers to: a domain-specific implementation, adapted for real-estate off-market intermediation at Dometria AI, of the retrieval-augmented cold-start framework of \S\ref{sec:coldrag-paper}, with an ingestion pipeline built against the DIAL-KG framework of \S\ref{sec:dial-kg} rather than the ColdRAG paper's own graph-construction method. It comprises three modules described in turn below: an ingestion pipeline that builds the knowledge graph (\S\ref{sec:coldrag-ingestion}), an inference engine that retrieves candidates from it (\S\ref{sec:coldrag-inference}), and a conversational completion module that acquires structured input from a human when required fields are missing (\S\ref{sec:coldrag-hitl}).
+ColdRAG (figure~\ref{fig:coldrag-architecture}) is the graph-augmented matching system this thesis's title refers to: a domain-specific implementation, adapted for real-estate off-market intermediation at Dometria AI, of the retrieval-augmented cold-start framework of \S\ref{sec:coldrag-paper}, with an ingestion pipeline built against the DIAL-KG framework of \S\ref{sec:dial-kg} rather than the ColdRAG paper's own graph-construction method. It comprises three modules described in turn below: an ingestion pipeline that builds the knowledge graph (\S\ref{sec:coldrag-ingestion}), an inference engine that retrieves candidates from it (\S\ref{sec:coldrag-inference}), and a conversational completion module that acquires structured input from a human when required fields are missing (\S\ref{sec:coldrag-hitl}).
 
 \subsection{Ingestion: an adapted DIAL-KG pipeline}
 \label{sec:coldrag-ingestion}
@@ -151,32 +135,11 @@ Governance is conservative by design, and the instruction says so in as many wor
 
 Everything that survives governance is written in a single transactional \texttt{MERGE}, batched via \texttt{UNWIND} so that one ingestion commits many nodes and edges atomically rather than one Cypher statement per fact. Entity profiles produced along the way are auto-saved to the Meta-Knowledge Base (\S\ref{sec:dial-kg}), so that the next ingestion run is disambiguated against this one rather than starting cold.
 
-
 \begin{figure}[htbp]
-\centering
-\figplaceholder[0.34\textheight]{Figure placeholder --- the three ColdRAG
-modules against the single Neo4j store. Centre: Neo4j, holding product nodes,
-entity nodes, the relations between them, the vector index over entity
-embeddings, and the singleton Meta-Knowledge Base. Left, \textbf{ingestion}:
-document $\rightarrow$ SHA-256 product id $\rightarrow$ LLM extraction split
-into the two tracks (entities and relations; product title and metadata)
-$\rightarrow$ BGE-M3 embeddings $\rightarrow$ NED (vector candidates, then an
-LLM judge) $\rightarrow$ governance (evidence check, then logical check)
-$\rightarrow$ batched \texttt{UNWIND}/\texttt{MERGE} write. Right,
-\textbf{retrieval}: query $\rightarrow$ LLM analysis into key concepts and the
-\texttt{needs\_reasoning} flag $\rightarrow$ hybrid router $\rightarrow$
-either direct vector search or the multi-hop loop (fan-out, edge grouping,
-0--10 scoring, pruning at $\gamma$) $\rightarrow$ top-$k$ blind-match ranking
-$\rightarrow$ Laplace perturbation applied only on the outbound edge, which
-should be drawn at the system boundary rather than inside the loop. Bottom,
-\textbf{conversational completion}: the taxonomy-driven state machine, with
-session state in Redis and its confirmed payload routed back to either
-ingestion or retrieval.}
-\caption{ColdRAG's three modules. Ingestion and retrieval never address each
-other directly; the graph is the only thing they share, which is what allows a
-product ingested by one to be reachable by the other without a second
-extraction of its content.}
-\label{fig:coldrag-architecture}
+  \centering
+  \includegraphics[width=1\linewidth]{3/Gemini_Generated_Image_vv38jbvv38jbvv38.jpg}
+  \caption{ColdRAG's three modules. Ingestion and retrieval never address each other directly; the graph is the only thing they share, which is what allows a product ingested by one to be reachable by the other without a second extraction of its content.}
+  \label{fig:coldrag-architecture}
 \end{figure}
 
 \subsection{Inference engine: multi-hop retrieval}
@@ -200,7 +163,14 @@ One departure from the definition of \S\ref{sec:dp-definition} must be stated pl
 \subsection{Conversational completion: the HITL gatekeeper}
 \label{sec:coldrag-hitl}
 
-The \texttt{ConversationalCompletion/} module acquires structured data from a user through a guided conversation rather than a form. Its control flow is an event-driven state machine built on LlamaIndex Workflows (\S\ref{sec:llamaindex-workflows}), implemented across \texttt{workflow.py} (steps) and \texttt{events.py} (the Pydantic events that pass between them) \citep{liu2026llamaindex}. A user's stated intent is routed deterministically through a fixed taxonomy — intent, then macro-category, then subcategory — defined declaratively in \texttt{rules.yaml} and matched by a semantic router rather than by free-form LLM classification, so the routing step itself is reproducible.
+The \texttt{ConversationalCompletion/} module (figure~\ref{fig:hitl-completion}) acquires structured data from a user through a guided conversation rather than a form. Its control flow is an event-driven state machine built on LlamaIndex Workflows (\S\ref{sec:llamaindex-workflows}), implemented across \texttt{workflow.py} (steps) and \texttt{events.py} (the Pydantic events that pass between them) \citep{liu2026llamaindex}. A user's stated intent is routed deterministically through a fixed taxonomy — intent, then macro-category, then subcategory — defined declaratively in \texttt{rules.yaml} and matched by a semantic router rather than by free-form LLM classification, so the routing step itself is reproducible.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1\linewidth]{3/Gemini_Generated_Image_43jpwi43jpwi43jp.jpg}
+  \caption{This is the whole conversational completion pipeline}
+  \label{fig:hitl-completion}
+\end{figure}
 
 Once a subcategory is fixed, \texttt{models.py}'s \texttt{RuleParser} generates a Pydantic model at runtime from that subcategory's rule definition (\S\ref{sec:structured-output}) — the same runtime-schema-generation pattern Block~3 of \texttt{dometria-bulk-insert} uses (\S\ref{sec:bulk-insert-block3}), applied here to conversational rather than document input. An LLM judge attempts structured extraction from the user's message against this model on every turn; any mandatory field that remains unfilled produces one targeted, streamed follow-up question for that field, rather than a generic prompt to provide more information. The loop repeats until every mandatory field validates, at which point a summary is presented for user confirmation and, once confirmed, a structured payload is emitted and routed onward to either ingestion (\S\ref{sec:coldrag-ingestion}) or search (\S\ref{sec:coldrag-inference}). Conversation state persists across turns in Redis with a 30-minute TTL (\texttt{COLDRAG\_SESSION\_TTL}), external to the workflow process itself, so a conversation survives independently of any single request's lifetime (\S\ref{sec:hitl-validation}).
 
@@ -239,3 +209,9 @@ Table~\ref{tab:coldrag-hyperparams} lists the environment-variable hyperparamete
 \label{sec:coldrag-api}
 
 ColdRAG exposes its functionality through a fixed set of REST, WebSocket, and SSE endpoints: \texttt{/api/search} (multi-hop retrieval, streamed over SSE), \texttt{/api/ingest\_product} (real-time DIAL-KG ingestion of a single document), \texttt{/ws/hitl/\{session\_id\}} (the conversational completion WebSocket), \texttt{/api/taxonomy} (the \texttt{rules.yaml}-derived taxonomy), \texttt{/api/graph/overview}, \texttt{/api/db\_stats}, \texttt{/api/config}, \texttt{/api/mkb}, \texttt{/api/subgraph}, and \texttt{/api/egonet/\{entity\_id\}} (graph-inspection and visualization endpoints consumed by the vis-network.js frontend of \S\ref{sec:coldrag-stack}).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1\linewidth]{3/Gemini_Generated_Image_cmk0fhcmk0fhcmk0.jpg}
+  \caption{Exposed endpoints for the ColdRAG module}
+\end{figure}

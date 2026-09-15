@@ -20,38 +20,66 @@ Two properties of this family motivate what replaced it. Because the hidden stat
 \subsection{Transformer architecture and autoregressive models}
 \label{sec:transformer}
 
-The Transformer replaced recurrence with self-attention: every token's representation is updated by attending to every other token in the sequence in parallel, weighted by learned compatibility scores \citep{vaswani2017attention}. Removing recurrence removes the sequential dependency that made recurrent networks slow to train on long sequences, and self-attention gives every pair of tokens a direct path to one another regardless of distance, which mitigates the degradation in how much distant context recurrent networks retain in practice. Figure~\ref{fig:self-attention} contrasts the two connectivity patterns.
+The Transformer replaced recurrence with self-attention: every token's representation is updated by attending to every other token in the sequence in parallel, weighted by learned compatibility scores \citep{vaswani2017attention}. Removing recurrence removes the sequential dependency that made recurrent networks slow to train on long sequences, and self-attention gives every pair of tokens a direct path to one another regardless of distance, which mitigates the degradation in how much distant context recurrent networks retain in practice. Figure~\ref{fig:transformer} contrasts the two connectivity patterns.
 
 \begin{figure}[htbp]
-\centering
-\figplaceholder{Figure placeholder --- self-attention in a Transformer block.
-Left: a recurrent layer, where the representation of each token is computed from
-its predecessor's hidden state, giving a path length between two tokens that
-grows with their separation. Right: a self-attention layer over the same
-sequence, where every token is connected directly to every other, weighted by
-learned compatibility scores, and all positions are computed in parallel.
-Below: the residual block --- multi-head attention, add \& norm, feed-forward,
-add \& norm --- stacked $N$ times.}
-\caption{Self-attention replaces recurrence. Every pair of tokens is connected
+ 	\centering
+ 	\includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 12.54.21.png}
+ 	\caption{Self-attention replaces recurrence. Every pair of tokens is connected
 by a direct, constant-length path, and no position depends on another having
-been computed first.}
-\label{fig:self-attention}
+been computed first \citep{vaswani2017attention}.}
+	\label{fig:transformer}
 \end{figure}
 
-Three families of models built on the Transformer differ in how they use attention. Encoder models such as BERT attend bidirectionally — every token sees the whole input, including tokens to its right — and are trained with a masked-token prediction objective, which suits representation learning for classification and extraction rather than open-ended generation \citep{devlin2019bert}. Encoder-decoder models such as T5 pair a bidirectional encoder over the input with an autoregressive decoder over the output, casting every task as text-to-text \citep{raffel2020exploring}. Decoder-only, autoregressive models such as the GPT family mask attention to the left context only, so each token is predicted from its predecessors alone, and generation proceeds one token at a time by repeatedly sampling from this conditional distribution \citep{radford2018improving,brown2020language}. This thesis uses \emph{LLM} to refer to the decoder-only, autoregressive family, since it is the family the systems in Chapter~\ref{ch:systems} consume through an API; encoder models still appear in both systems, but as embedding models (\S\ref{sec:embedding-models}) rather than as generators.
+Three families of models built on the Transformer differ in how they use attention (Figure~\ref{fig:architectures}). Encoder models such as BERT attend bidirectionally — every token sees the whole input, including tokens to its right — and are trained with a masked-token prediction objective, which suits representation learning for classification and extraction rather than open-ended generation \citep{devlin2019bert}. Encoder-decoder models such as T5 pair a bidirectional encoder over the input with an autoregressive decoder over the output, casting every task as text-to-text \citep{raffel2020exploring}. Decoder-only, autoregressive models such as the GPT family mask attention to the left context only, so each token is predicted from its predecessors alone, and generation proceeds one token at a time by repeatedly sampling from this conditional distribution \citep{radford2018improving,brown2020language}. This thesis uses \emph{LLM} to refer to the decoder-only, autoregressive family, since it is the family the systems in Chapter~\ref{ch:systems} consume through an API; encoder models still appear in both systems, but as embedding models (\S\ref{sec:embedding-models}) rather than as generators.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 13.08.49.png}
+  \caption{Left: A standard encoder-decoder architecture uses fully-
+visible masking in the encoder and the encoder-decoder attention, with causal
+masking in the decoder. Middle: A language model consists of a single Transformer
+layer stack and is fed the concatenation of the input and target, using a causal
+mask throughout. Right: Adding a prefix to a language model corresponds to
+allowing fully-visible masking over the input \citep{raffel2020exploring}.}
+	\label{fig:architectures}
+\end{figure}
+
 
 Transformers do not operate on words but on subword tokens produced by a learned segmentation of the input string. Byte-pair encoding merges frequent character pairs into a fixed-size vocabulary, so common words become single tokens while rare words decompose into several pieces, which bounds vocabulary size without ever failing on an unseen word \citep{sennrich2016neural}; SentencePiece performs the same segmentation directly on raw text without requiring language-specific pre-tokenization, which matters for consistent handling of languages that do not delimit words by whitespace \citep{kudo2018sentencepiece}. Tokenization determines what a model's context window and per-call cost are measured in, and it is the unit in which the token accounting reported in \S\ref{sec:conclusions-results} is expressed.
 
-Scale is a defining property of this family. Training loss decreases as a smooth, predictable function of model size, dataset size, and compute, a relationship formalized as scaling laws \citep{kaplan2020scaling} and later refined by Chinchilla's finding that many early models were undertrained relative to their parameter count for the compute budget spent on them \citep{hoffmann2022training}. GPT-3 demonstrated that scale alone — without gradient updates at inference time — produces a model capable of performing new tasks from a handful of examples given in its input, a behavior termed few-shot in-context learning \citep{brown2020language}.
+Scale is a defining property of this family. Training loss decreases as a smooth, predictable function of model size, dataset size, and compute, a relationship formalized as scaling laws \citep{kaplan2020scaling} and later refined by Chinchilla's finding that many early models were undertrained relative to their parameter count for the compute budget spent on them \citep{hoffmann2022training}. GPT-3 demonstrated that scale alone — without gradient updates at inference time — produces a model capable of performing new tasks from a handful of examples given in its input, a behavior termed few-shot in-context learning \citep{brown2020language} (Figure~\ref{fig:incontextlearning}).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 13.40.34.png}
+  \caption{This graph shows the effect of in-context learning performance on a simple task requiring the model to remove random symbols from a word, both with and without a natural language task description (see Sec. 3.9.2). The steeper “in-context learning curves” for large models demonstrate improved ability to learn a task from contextual information. Qualitatively similar behavior is observed across a wide range of tasks \citep{brown2020language}.} 
+  \label{fig:incontextlearning}
+\end{figure}
+
 
 \subsection{Instruction-tuned LLMs and prompting}
 \label{sec:instruction-tuning}
 
 A base LLM trained only to predict the next token continues a prompt with what is statistically likely, which is not the same as what is requested. FLAN showed that fine-tuning on a large collection of tasks reformulated as natural-language instructions improves zero-shot performance on unseen tasks \citep{wei2022finetuned}. InstructGPT went further by fine-tuning first on human-written demonstrations and then on human preference comparisons via reinforcement learning, an alignment procedure known as RLHF that builds on preference-based reward learning \citep{christiano2017deep,ouyang2022training}. Instruction-tuned models follow a natural-language instruction directly, which is the interaction mode every LLM call in this thesis relies on: the caller writes a prompt, not a task-specific fine-tuning set.
 
-Instruction-tuned models are distributed both as proprietary services reachable only through an API and as open weights. The distinction does not affect the argument of this thesis, because both systems in Chapter~\ref{ch:systems} reach either kind through one OpenAI-compatible gateway, which makes the choice of model a configuration value rather than an architectural commitment. One model is named in what follows: ColdRAG's configured default is the open-weight DeepSeek-V3, cited here to the vendor's technical report because no peer-reviewed description of that model exists and the claim being supported is only that this specific model is the one the system defaults to \citep{deepseekai2024deepseek}.
+Instruction-tuned models are distributed both as proprietary services reachable only through an API and as open weights. The distinction does not affect the argument of this thesis, because both systems in Chapter~\ref{ch:systems} reach either kind through one OpenAI-compatible gateway, which makes the choice of model a configuration value rather than an architectural commitment. One model is named in what follows: ColdRAG's configured default is the open-weight DeepSeek-V3 (Figure~\ref{fig:deepseekv3}), cited here to the vendor's technical report because no peer-reviewed description of that model exists and the claim being supported is only that this specific model is the one the system defaults to \citep{deepseekai2024deepseek}.
 
-Prompting is the practice of shaping a model's output through the text of the input alone, without updating any weights \citep{liu2023pre}. Zero-shot prompting states the task with no examples; few-shot prompting prepends a small number of input-output demonstrations \citep{brown2020language}. Chain-of-thought prompting elicits intermediate reasoning steps before the final answer, which measurably improves performance on multi-step reasoning tasks, and the improvement persists even with a single generic instruction (``let us think step by step'') rather than task-specific demonstrations \citep{wei2022chain,kojima2022large}. Chain-of-thought underpins two mechanisms used later in this thesis: self-consistency voting (\S\ref{sec:self-consistency}) operates over independently sampled chain-of-thought completions, and the multi-hop retrieval loop of \S\ref{sec:graphrag} scores and prunes reasoning paths step by step rather than answering in one pass.
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 13.45.02.png}
+  \caption{Illustration of the basic architecture of DeepSeek-V3 	\citep{deepseekai2024deepseek}.}
+  \label{fig:deepseekv3}
+\end{figure}
+
+Prompting is the practice of shaping a model's output through the text of the input alone, without updating any weights \citep{liu2023pre}. Zero-shot prompting states the task with no examples; few-shot prompting prepends a small number of input-output demonstrations \citep{brown2020language}. Chain-of-thought prompting elicits intermediate reasoning steps before the final answer, which measurably improves performance on multi-step reasoning tasks, and the improvement persists even with a single generic instruction (``let us think step by step'') rather than task-specific demonstrations \citep{wei2022chain,kojima2022large}. Chain-of-thought (figure~\ref{fig:cotprompt}) underpins two mechanisms used later in this thesis: self-consistency voting (\S\ref{sec:self-consistency}) operates over independently sampled chain-of-thought completions, and the multi-hop retrieval loop of \S\ref{sec:graphrag} scores and prunes reasoning paths step by step rather than answering in one pass.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 13.47.50.png}
+  \caption{Chain-of-thought prompting enables large language models to tackle complex arithmetic, commonsense, and symbolic reasoning tasks. Chain-of-thought reasoning processes are highlighted \citep{wei2022chain}.}
+  \label{fig:cotprompt}
+\end{figure}
 
 \subsection{Structured and constrained output from an LLM}
 \label{sec:structured-output}
@@ -60,7 +88,14 @@ An autoregressive LLM's native output is unstructured text. Both systems in this
 
 The first constrains decoding itself. At each generation step the set of tokens the model may sample is restricted to those consistent with a target grammar or JSON schema, so the output is well formed by construction rather than by post-hoc validation \citep{willard2023efficient}; subsequent engines reduce the runtime overhead of maintaining this constraint to the point where it is negligible relative to generation itself \citep{dong2024xgrammar}. The guarantee is syntactic: constrained decoding ensures the output parses against the schema, and says nothing about whether the values it contains are correct.
 
-The second strategy exposes the schema to the model as part of the prompt — as a function or tool signature — and relies on instruction-following behavior (\S\ref{sec:instruction-tuning}) to produce a matching payload, validating after the fact and retrying on failure. Instructor layers this pattern on Pydantic: a schema is declared once as a Pydantic model, passed to the LLM call, and the returned payload is parsed and validated against that same model, with a validation error triggering an automatic retry that appends the error to the prompt \citep{liu2026instructor,colvin2026pydantic}. Because validation is ordinary Python, arbitrary semantic constraints can be enforced in the same pass as type checking — a property Chapter~\ref{ch:systems} exploits to reject any extracted field that is populated but lacks a supporting verbatim quote.
+The second strategy exposes the schema to the model as part of the prompt — as a function or tool signature — and relies on instruction-following behavior (\S\ref{sec:instruction-tuning}) to produce a matching payload, validating after the fact and retrying on failure. Instructor layers this pattern on Pydantic: a schema is declared once as a Pydantic model, passed to the LLM call, and the returned payload is parsed and validated against that same model, with a validation error triggering an automatic retry that appends the error to the prompt \citep{liu2026instructor,colvin2026pydantic}. Because validation is ordinary Python (figure\ref{fig:instructor}), arbitrary semantic constraints can be enforced in the same pass as type checking: a property Chapter~\ref{ch:systems} exploits to reject any extracted field that is populated but lacks a supporting verbatim quote.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.5\linewidth]{2/1727283707513.jpeg}
+  \caption{Instructor is the most popular Python library for extracting structured data from Large Language Models}
+  \label{fig:instructor}
+\end{figure}
 
 Neither strategy is free. Constraining an LLM's output format can degrade the quality of its reasoning relative to the same task posed in free text, so schema design is a performance-relevant decision and not only an interface one \citep{tam2024let}, and reliability degrades measurably as schemas grow deeper and larger \citep{geng2025jsonschemabench}. Restructuring the schema itself — decomposing one large extraction into several smaller ones — is a documented mitigation \citep{shrimal2025parse}, and is the reason Chapter~\ref{ch:systems} partitions extraction into per-topic groups rather than requesting all fields in a single call. A related design point is abstention: a closed vocabulary that offers no way to say \emph{the document does not state this} forces the model to choose a wrong value, so an explicit abstention option is part of the schema rather than an afterthought.
 
@@ -83,38 +118,30 @@ Three limitations motivate specific design choices in both systems and are refer
 \subsection{Retrieval-augmented generation: motivation, architecture, limits}
 \label{sec:rag}
 
-Retrieval-augmented generation (RAG) addresses the grounding limitation of \S\ref{sec:llm-limitations} by conditioning generation on text retrieved from an external corpus at inference time, rather than on parameters learned during training alone \citep{lewis2020retrieval}. The canonical architecture has two stages: a retriever selects a small set of passages relevant to the query, typically by dense vector similarity between a query embedding and a precomputed index of passage embeddings \citep{karpukhin2020dense}, and a generator conditions on the query concatenated with those passages to produce its answer. This decouples factual capacity from parameter count — the corpus, not the weights, is the source of truth — and lets the corpus be updated without retraining \citep{gao2023retrieval}.
+Retrieval-augmented generation (RAG, figure~\ref{fig:RAG}) addresses the grounding limitation of \S\ref{sec:llm-limitations} by conditioning generation on text retrieved from an external corpus at inference time, rather than on parameters learned during training alone \citep{lewis2020retrieval}. The canonical architecture has two stages: a retriever selects a small set of passages relevant to the query, typically by dense vector similarity between a query embedding and a precomputed index of passage embeddings \citep{karpukhin2020dense}, and a generator conditions on the query concatenated with those passages to produce its answer. This decouples factual capacity from parameter count — the corpus, not the weights, is the source of truth — and lets the corpus be updated without retraining \citep{gao2023retrieval}.
 
-Flat RAG has two structural limits that motivate the graph-based extension in \S\ref{sec:graphrag}. First, retrieval treats passages as an unordered bag: each is scored for similarity to the query independently, so nothing in the architecture represents relationships \emph{between} passages, which makes questions requiring evidence combined from several documents hard to answer in a single retrieval pass \citep{yang2018hotpotqa}. Multi-hop methods address this by interleaving retrieval with intermediate reasoning, retrieving again on the basis of what a partial chain of thought has inferred rather than only on the original query \citep{trivedi2023interleaving}. Second, retrieval is local by construction: it surfaces passages resembling the query, not passages relevant to a thematic context the query does not literally mention. Position effects compound both limits, since correctly retrieved evidence is used unevenly by the generator depending on where it falls in the context window \citep{liu2024lost}.
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 14.01.12.png}
+  \caption{One of the first RAG architectures, proposed in \citep{lewis2020retrieval}}
+  \label{fig:RAG}
+\end{figure}
+
+Flat RAG has two structural limits that motivate the graph-based extension in \S\ref{sec:graphrag}. First, \textbf{retrieval treats passages as an unordered bag}: each is scored for similarity to the query independently, so nothing in the architecture represents relationships \emph{between} passages, which makes questions requiring evidence combined from several documents hard to answer in a single retrieval pass \citep{yang2018hotpotqa}. Multi-hop methods address this by interleaving retrieval with intermediate reasoning, retrieving again on the basis of what a partial chain of thought has inferred rather than only on the original query \citep{trivedi2023interleaving}. Second, \textbf{retrieval is local by construction}: it surfaces passages resembling the query, not passages relevant to a thematic context the query does not literally mention. Position effects compound both limits, since correctly retrieved evidence is used unevenly by the generator depending on where it falls in the context window \citep{liu2024lost}.
 
 A further line of work makes the pipeline adaptive rather than fixed, letting the system decide when to retrieve and whether retrieved evidence is good enough to use \citep{asai2024self}. Evaluating such systems is itself an open problem: retrieval quality and generation faithfulness must be assessed separately, and reference-free frameworks exist precisely because ground-truth answer sets are rarely available in applied settings \citep{es2024ragas,chen2024benchmarking} — a constraint \S\ref{sec:conclusions-results} confronts directly.
 
 \subsection{GraphRAG: knowledge graphs, community detection, and multi-hop reasoning}
 \label{sec:graphrag}
 
-\begin{figure}[htbp]
-\centering
-\figplaceholder[0.36\textheight]{Figure placeholder --- flat RAG versus GraphRAG.
-Left panel: the flat pipeline. Query $\rightarrow$ embedding $\rightarrow$
-top-$k$ similarity lookup against an index of independently embedded passages
-$\rightarrow$ the retrieved passages concatenated into the generator's prompt.
-The passages are drawn as an unordered set with no connections between them,
-and two passages that jointly answer the query are shown as separately scored,
-either of which may fall below the cut-off.
-Right panel: the graph pipeline. Corpus $\rightarrow$ LLM extraction of entities
-and relations at ingestion time $\rightarrow$ a knowledge graph in which
-cross-document connections are explicit edges. A query enters at a seed set of
-nodes found by vector search, and traversal follows edges outward, so evidence
-is assembled along a path rather than gathered from a single similarity ranking.}
-\caption{The structural difference between flat and graph-based retrieval.
-Flat retrieval scores each passage independently against the query; graph
-retrieval enters at a seed set and follows relations extracted once at
-ingestion time, which is what makes multi-hop evidence reachable in a single
-query.}
-\label{fig:rag-vs-graphrag}
-\end{figure}
+GraphRAG replaces the flat passage index with a knowledge graph extracted from the corpus by an LLM, and replaces similarity-only retrieval with retrieval guided by graph structure \citep{edge2024local}. Figure~\ref{fig:graphrag} sets the two architectures side by side. Two properties of a knowledge graph answer the two limits of flat RAG directly: entities and relations are extracted once at ingestion time, which makes cross-document connections explicit as edges rather than implicit in embedding proximity, and traversal along those edges gives retrieval a mechanism for multi-hop reasoning that a single similarity query cannot express.
 
-GraphRAG replaces the flat passage index with a knowledge graph extracted from the corpus by an LLM, and replaces similarity-only retrieval with retrieval guided by graph structure \citep{edge2024local}. Figure~\ref{fig:rag-vs-graphrag} sets the two architectures side by side. Two properties of a knowledge graph answer the two limits of flat RAG directly: entities and relations are extracted once at ingestion time, which makes cross-document connections explicit as edges rather than implicit in embedding proximity, and traversal along those edges gives retrieval a mechanism for multi-hop reasoning that a single similarity query cannot express.
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 14.06.19.png}
+  \caption{Graph RAG pipeline using an LLM-derived graph index of source document text. This graph index spans nodes (e.g., entities), edges (e.g., relationships), and covariates (e.g., claims) that have been detected, extracted, and summarized by LLM prompts tailored to the domain of the dataset \citep{edge2024local}.}
+  \label{fig:graphrag}
+\end{figure}
 
 Microsoft's GraphRAG builds this graph automatically — an LLM extracts entities, relations, and claims from source documents — and applies the Leiden algorithm to partition the graph into hierarchical communities of densely connected nodes \citep{edge2024local,traag2019louvain}. Leiden improves on its predecessor Louvain by guaranteeing that every detected community is internally connected, which Louvain does not \citep{traag2019louvain,blondel2008fast}. Each community is then summarized by an LLM, and query answering combines the relevant summaries; this is GraphRAG's global search mode, aimed at questions about a corpus as a whole rather than a specific fact.
 
@@ -131,6 +158,7 @@ Community summarization is not the retrieval pattern this thesis's systems use. 
 Collaborative filtering (CF) recommends items from patterns in a user-item interaction matrix alone, on the assumption that users who agreed in the past will agree again. Item-based CF scores a candidate by its co-interaction similarity to items the user has already engaged with \citep{sarwar2001item}; matrix factorization learns low-dimensional latent vectors for users and items whose inner product approximates observed interaction strength \citep{koren2009matrix}. Because most real interaction data records implicit signals (a click, a view) rather than explicit ratings, variants reformulate the objective around confidence-weighted implicit feedback \citep{hu2008collaborative} or around ranking pairs of observed and unobserved items \citep{rendle2009bpr}, and later work replaces the inner product with a learned neural interaction function \citep{he2017neural}. CF requires no item or user attributes, only interaction history — simultaneously its strength (domain-agnostic) and its structural weakness: an entity with no interaction history offers nothing to factorize.
 
 Ranking quality across all these methods is conventionally measured over a truncated list of $K$ recommendations, since a user inspects only the top of it. Three metrics recur. Hit Rate at $K$ (HR@$K$) is the fraction of users for whom at least one relevant item appears in the top $K$ — a coarse, binary measure of whether the list is useful at all. Recall at $K$,
+
 \begin{equation}
 \mathrm{Recall}@K \;=\; \frac{|\,\mathcal{R}_u \cap \mathcal{L}_u^{K}\,|}{|\,\mathcal{R}_u\,|},
 \label{eq:recall-at-k}
@@ -142,6 +170,7 @@ measures what proportion of the items relevant to user $u$, written $\mathcal{R}
 \mathrm{NDCG}@K \;=\; \frac{\mathrm{DCG}@K}{\mathrm{IDCG}@K},
 \label{eq:ndcg}
 \end{equation}
+
 where $rel_i$ is the graded relevance of the item at position $i$ and $\mathrm{IDCG}@K$ is the value the same items would achieve in their ideal order, which normalizes the score to $[0,1]$ and makes it comparable across queries with different numbers of relevant items.
 
 All three presuppose a ground-truth relevance set $\mathcal{R}_u$, obtained in the standard evaluation protocol by holding out interactions the system is then asked to predict. This is precisely what a deployment with no interaction history cannot supply, and it is the reason \S\ref{sec:conclusions-results} reports no figure of this kind: the metrics are stated here so that their absence later is legible as a specific, structural consequence of the cold-start setting rather than an omission.
@@ -151,9 +180,9 @@ Content-based filtering compares item or user attributes directly, recommending 
 \subsection{Item cold-start versus user cold-start}
 \label{sec:item-vs-user-coldstart}
 
-Cold-start is the failure of collaborative filtering under absent or sparse interaction history, and it takes two distinct forms. User cold-start affects a new user with no interaction history: there is nothing to factorize on the user side of the matrix. Item cold-start is the symmetric case for a newly listed item. The two differ in remedy as well as in cause. User cold-start is commonly handled by eliciting explicit preferences or profile attributes at onboarding — the approach the conversational module of \S\ref{sec:hitl} takes.
+\textbf{Cold-start} is the failure of collaborative filtering under absent or sparse interaction history, and it takes two distinct forms. \textbf{User cold-start} affects a new user with no interaction history: there is nothing to factorize on the user side of the matrix. Item cold-start is the symmetric case for a newly listed item. The two differ in remedy as well as in cause. User cold-start is commonly handled by eliciting explicit preferences or profile attributes at onboarding — the approach the conversational module of \S\ref{sec:hitl} takes.
 
-Item cold-start instead requires substituting content signal for interaction signal until history accumulates, and several strategies do so. DropoutNet trains a model to reconstruct latent factors from content features alone, simulating the cold condition during training \citep{volkovs2017dropoutnet}. MeLU applies meta-learning so the model adapts to a new item or user from very few interactions \citep{lee2019melu}. Heater and CLCRec align content-based and collaborative embedding spaces so that a content-only representation is directly usable for ranking \citep{zhu2020recommendation,wei2021contrastive}, and ALDI distills the behavior of a warm-item model into a cold-item one \citep{huang2023aligning}. What these share is a training stage over an existing interaction corpus — a requirement that is not always satisfiable, and is not satisfied in the deployment setting of this thesis.
+\textbf{Item cold-start} instead requires substituting content signal for interaction signal until history accumulates, and several strategies do so. DropoutNet trains a model to reconstruct latent factors from content features alone, simulating the cold condition during training \citep{volkovs2017dropoutnet}. MeLU applies meta-learning so the model adapts to a new item or user from very few interactions \citep{lee2019melu}. Heater and CLCRec align content-based and collaborative embedding spaces so that a content-only representation is directly usable for ranking \citep{zhu2020recommendation,wei2021contrastive}, and ALDI distills the behavior of a warm-item model into a cold-item one \citep{huang2023aligning}. What these share is a training stage over an existing interaction corpus — a requirement that is not always satisfiable, and is not satisfied in the deployment setting of this thesis.
 
 The matching system described in Chapter~\ref{ch:systems} addresses item cold-start under exactly that constraint: a newly ingested asset has no interaction history by construction, no historical interaction corpus is available to train an alignment model on, and matching must therefore proceed from extracted content alone.
 
@@ -165,7 +194,14 @@ The remedies above all learn a mapping from content to the collaborative space, 
 \subsection{The ColdRAG paper and its relation to this thesis's work}
 \label{sec:coldrag-paper}
 
-Yang et al. propose ColdRAG, a retrieval-augmented framework for cold-start recommendation that builds a knowledge graph dynamically from item content and retrieves candidates through LLM-guided multi-hop reasoning over that graph, rather than through an embedding learned from interaction history \citep{yang2025adaptive}. It combines the item-cold-start remedy of \S\ref{sec:item-vs-user-coldstart} — content substituting for absent interactions — with the graph-structured retrieval of \S\ref{sec:graphrag}, and requires no training stage over historical interactions, which is what makes it applicable in the setting described above.
+Yang et al. propose ColdRAG (figure~\ref{fig:coldrag}), a retrieval-augmented framework for cold-start recommendation that builds a knowledge graph dynamically from item content and retrieves candidates through LLM-guided multi-hop reasoning over that graph, rather than through an embedding learned from interaction history \citep{yang2025adaptive}. It combines the item-cold-start remedy of \S\ref{sec:item-vs-user-coldstart} — content substituting for absent interactions — with the graph-structured retrieval of \S\ref{sec:graphrag}, and requires no training stage over historical interactions, which is what makes it applicable in the setting described above.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 14.16.30.png}
+  \caption{The original ColdRAG architecture, proposed in \citep{yang2025adaptive}}
+  \label{fig:coldrag}
+\end{figure}
 
 The system presented in this thesis carries the same name and is a domain-specific implementation adapted from that paper for real-estate off-market intermediation at Dometria AI. It is not the authors' original codebase, which is maintained separately. Chapter~\ref{ch:systems} states at each point of divergence where the Dometria implementation departs from the published design; the largest departure is the ingestion pipeline, which follows DIAL-KG (\S\ref{sec:dial-kg}) rather than the graph-construction method described in the ColdRAG paper.
 
@@ -189,14 +225,27 @@ The two properties compose naturally, and they compose into a requirement: an in
 \subsection{The DIAL-KG framework}
 \label{sec:dial-kg}
 
-DIAL-KG, proposed by Bao et al., is a schema-free, incremental knowledge graph construction framework built around three components that Chapter~\ref{ch:systems} refers to by name \citep{bao2026dial}. A Meta-Knowledge Base (MKB) accumulates entity profiles across ingestion runs and serves as the persistent context against which each new document's extraction is disambiguated and merged, so documents are not processed in isolation. Dual-track extraction separates the extraction of graph-worthy entities and relations from the extraction of document- or product-level identifying information, letting the two tracks be validated and merged independently. An incremental adaptation cycle governs how graph and MKB evolve together: each ingestion contributes new nodes and edges and updates the entity profiles that the next ingestion will be checked against.
+DIAL-KG (figure~\ref{fig:dialkg}), proposed by Bao et al., is a schema-free, incremental knowledge graph construction framework built around three components that Chapter~\ref{ch:systems} refers to by name \citep{bao2026dial}. A Meta-Knowledge Base (MKB) accumulates entity profiles across ingestion runs and serves as the persistent context against which each new document's extraction is disambiguated and merged, so documents are not processed in isolation. Dual-track extraction separates the extraction of graph-worthy entities and relations from the extraction of document- or product-level identifying information, letting the two tracks be validated and merged independently. An incremental adaptation cycle governs how graph and MKB evolve together: each ingestion contributes new nodes and edges and updates the entity profiles that the next ingestion will be checked against.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 14.18.59.png}
+  \caption{Overall DIAL-KG framework \citep{bao2026dial}}
+  \label{fig:dialkg}
+\end{figure}
 
 Chapter~\ref{ch:systems} implements its ingestion pipeline against this framework, and the MKB, dual-track extraction, and incremental cycle described here are the direct source of the correspondingly named components there. DIAL-KG is a construction framework this thesis's system implements against; it is not part of the ColdRAG paper's published inference method (\S\ref{sec:coldrag-paper}), and the two are combined in this work rather than in either source.
 
 \subsection{Named entity disambiguation, coreference resolution, entity linking}
 \label{sec:ned}
 
-Three related problems arise once extracted entities must be merged into a shared graph rather than kept per-document. Named entity disambiguation (NED) decides whether two entity mentions refer to the same real-world entity — the decision \S\ref{sec:schema-free-kgc} identified as unavoidable in any incremental pipeline. Coreference resolution is the narrower, intra-document version: deciding which mentions within a single text, including pronouns and other referring expressions, denote the same entity \citep{lee2017end}. Entity linking poses the problem against an external inventory of already-identified entities, asking which catalog entry a mention corresponds to, and is commonly solved by dense retrieval over entity representations followed by re-ranking \citep{wu2020scalable,sevgili2022neural}.
+Three related problems arise once extracted entities must be merged into a shared graph rather than kept per-document. 
+
+\textbf{Named entity disambiguation (NED)} decides whether two entity mentions refer to the same real-world entity — the decision \S\ref{sec:schema-free-kgc} identified as unavoidable in any incremental pipeline. 
+
+\textbf{Coreference resolution} is the narrower, intra-document version: deciding which mentions within a single text, including pronouns and other referring expressions, denote the same entity \citep{lee2017end}. 
+
+\textbf{Entity linking} poses the problem against an external inventory of already-identified entities, asking which catalog entry a mention corresponds to, and is commonly solved by dense retrieval over entity representations followed by re-ranking \citep{wu2020scalable,sevgili2022neural}.
 
 All three have moved from dedicated supervised models toward LLM prompting, and LLMs are competitive at entity matching when the decision hinges on the text at hand \citep{peeters2025entity}. They are not uniformly reliable as coreference resolvers, particularly on cases requiring world knowledge outside the immediate text \citep{le2023large}. This asymmetry motivates a two-stage design rather than a single LLM call: vector similarity over entity embeddings proposes a small candidate set, and an LLM judge adjudicates only within it. Retrieval bounds the comparison to plausible candidates and the judge supplies the semantic decision that similarity alone cannot make. Chapter~\ref{ch:systems} describes this two-stage arrangement as the NED mechanism of the ingestion pipeline.
 
@@ -229,6 +278,13 @@ A text embedding model maps a span of text to a fixed-length dense vector such t
 
 Multilinguality does not follow automatically, since nothing in a monolingual objective places a sentence and its translation nearby. Distilling a monolingual teacher into a multilingual student is one solution \citep{reimers2020making,conneau2020unsupervised}; BGE-M3 instead trains multilinguality, multiple granularities from sentence to long passage, and multiple retrieval functions — dense, sparse, and multi-vector — jointly in a single model \citep{chen2024m3}. Comparison across models is standardized by the MTEB benchmark suite, which evaluates embeddings over a broad range of retrieval and similarity tasks rather than a single dataset \citep{muennighoff2023mteb}.
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Screenshot 2026-09-15 at 14.23.09.png}
+  \caption{Characters of BGE-M3 \citep{chen2024m3}}
+  \label{fig:bgem3}
+\end{figure}
+
 Both systems in Chapter~\ref{ch:systems} operate on Italian source documents, which makes multilingual capability a requirement rather than a preference, and both use models from the families introduced here: a distilled multilingual MiniLM for contract-category matching, and BGE-M3 for the knowledge graph's entity embeddings.
 
 \subsection{Vector indices and nearest-neighbor search}
@@ -237,22 +293,9 @@ Both systems in Chapter~\ref{ch:systems} operate on Italian source documents, wh
 Exact nearest-neighbor search compares a query vector against every stored vector, scaling linearly with index size and becoming the retrieval bottleneck as a corpus grows. Approximate nearest-neighbor (ANN) methods trade a small, controllable amount of recall for large speedups. Hierarchical Navigable Small World graphs (HNSW) build a multi-layer proximity graph over the indexed vectors and search it greedily from a coarse top layer down to a fine bottom layer, achieving logarithmic-time search in practice at high recall \citep{malkov2020efficient}; other index families quantize vectors to trade memory for accuracy, and mature libraries implement several such strategies behind one interface \citep{johnson2021billion}.
 
 \begin{figure}[htbp]
-\centering
-\figplaceholder[0.32\textheight]{Figure placeholder --- HNSW layered proximity
-graph and greedy descent. Three stacked layers over the same vector set: the
-top layer holds a sparse sample of nodes joined by long-range edges, each lower
-layer adds more nodes and shorter edges, and the bottom layer contains every
-indexed vector. A query vector enters at a fixed entry point in the top layer;
-an arrow traces the greedy walk, moving at each step to whichever neighbor is
-closer to the query and dropping to the next layer down when no neighbor
-improves, ending in a short local search among the query's nearest neighbors in
-the bottom layer. The traversed path is highlighted against the unvisited
-majority of the graph.}
-\caption{Greedy descent through an HNSW index. Upper layers cover distance
-cheaply with few, long edges; lower layers resolve the neighborhood precisely.
-Only the highlighted path is visited, which is why search cost grows
-logarithmically rather than linearly in index size.}
-\label{fig:hnsw}
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/d6e3a660654d9cb55f7ac137a736539e227296b6-1920x1080 copy.png}
+  \label{fig:hnsw}
 \end{figure}
 
 Figure~\ref{fig:hnsw} traces a single query. The layered construction is what turns a linear scan into a short walk: the top layer contains a sparse random sample of the indexed vectors connected by long edges, so a few steps there cover a large distance in embedding space, and each descent adds nodes and shortens edges until the bottom layer, which holds every vector, resolves the immediate neighborhood. A search enters at a fixed point in the top layer, repeatedly moves to whichever neighbor lies closer to the query, and drops a layer when no neighbor improves on the current node. The approximation enters exactly here: the walk is greedy, so it can settle in a local optimum and terminate near --- but not at --- the true nearest neighbor, which is the recall that is being traded for speed. The parameter governing that trade is the size of the candidate list kept during the search, widening it explores more of each layer and recovers recall at proportionate cost. For the graph store used in Chapter~\ref{ch:systems}, this trade-off is a property of the database's index rather than something the retrieval engine implements or tunes directly. Dense retrieval is also frequently combined with lexical scoring such as BM25, since the two fail on different queries — exact identifiers and rare terms favor lexical matching, paraphrase favors dense \citep{robertson2009probabilistic}.
@@ -273,6 +316,13 @@ In conversational settings this takes the form of a clarifying question issued w
 \label{sec:llamaindex-workflows}
 
 LlamaIndex Workflows structures a multi-step process as typed steps connected by typed events: each step declares the event type it consumes and the type it emits, and the engine dispatches control to whichever step matches the event just produced, instead of following a hand-coded control-flow graph \citep{liu2026llamaindex}. Events are Pydantic models (\S\ref{sec:structured-output}), so data crossing a step boundary is schema-validated at the hand-off. A persistent Context object accompanies a run and lets steps read and write shared state.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/2385ad9dde643c0838b63a455daf29019dc369cb-1216x1342.png}
+  \caption{From the official Llamaindex wiki}
+  \label{fig:llamaindex}
+\end{figure}
 
 Two properties make this a fit for conversational data acquisition. A multi-turn process must accumulate partial answers across turns before all mandatory fields are filled, which the Context provides; and the control flow is genuinely data-dependent — which question comes next depends on what is still missing — which event dispatch expresses more directly than a fixed sequence of calls. Chapter~\ref{ch:systems} describes the conversational module as an instance of this pattern, with session state persisted externally between turns so a conversation survives beyond the lifetime of a single process.
 
@@ -297,22 +347,10 @@ The Laplace mechanism achieves this guarantee for a numeric query $f$ by adding 
 is the largest change a single record can induce in the query's true output \citep{dwork2006calibrating}.
 
 \begin{figure}[htbp]
-\centering
-\figplaceholder[0.30\textheight]{Figure placeholder --- the Laplace mechanism at
-two privacy budgets. A horizontal axis of released values with the true query
-answer marked at the centre. Two Laplace densities centred on it: a narrow one
-for a large $\varepsilon$ (weak guarantee, released value close to the truth)
-and a wide one for a small $\varepsilon$ (strong guarantee, released value
-possibly far from it), with the scale $\Delta f / \varepsilon$ annotated on
-each. Below, the same picture for two neighbouring datasets $D$ and $D'$
-differing in one record: their output distributions overlap heavily, and the
-bounded ratio between them at any point is the quantity Equation~\ref{eq:dp}
-constrains.}
-\caption{The Laplace mechanism. Noise scale is set by sensitivity divided by
-the privacy budget, so a smaller $\varepsilon$ widens the distribution and
-makes the two neighbouring datasets harder to tell apart at the cost of
-accuracy in the released value.}
-\label{fig:laplace}
+  \centering
+  \includegraphics[width=0.8\linewidth]{2/Laplace_distribution_pdf-7722463.png}
+  \caption{The Laplace mechanism. Noise scale is set by sensitivity divided by the privacy budget, so a smaller $\varepsilon$ widens the distribution and makes the two neighbouring datasets harder to tell apart at the cost of accuracy in the released value.}
+  \label{fig:laplace}
 \end{figure}
 
 Figure~\ref{fig:laplace} shows the trade-off the two parameters jointly control. Sensitivity, not $\varepsilon$ alone, determines how much a specific output is perturbed: a query that no individual record can move far tolerates proportionally less noise for the same guarantee. The guarantee also degrades under repetition — answering many queries over the same data consumes budget cumulatively — which is why $\varepsilon$ is a system-level parameter rather than a per-query one.

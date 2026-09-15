@@ -53,12 +53,6 @@ Independently of the runtime evaluation tooling, every commit is checked by a fi
 \item \texttt{pytest} for the test suite. 
 \end{itemize}
 
-\begin{wrapfigure}{l}{0.25\textwidth}
-  \centering
-  \includegraphics[width=\linewidth]{5/hurdle.jpg}
-\end{wrapfigure}
-
-
 The suite mocks the Instructor client for its unit tests, so most of it runs without network access or an API key; a smaller set of integration tests is gated behind a \texttt{-m integration} marker and requires \texttt{OPENROUTER\_API\_KEY} to exercise the pipeline against a live model. This gate is a code-correctness check — it establishes that the pipeline runs and that its types are internally consistent — and is a different kind of evidence from the field- and schema-level instrumentation of \S\ref{sec:results-bulk-insert-tooling}, which characterizes what the pipeline outputs rather than whether it runs.
 
 This is \textbf{architectural validation} in the narrow sense of \S\ref{sec:results-premise}: the specified scope was built and is exercised on every commit. It carries no claim about extraction quality.
@@ -68,9 +62,7 @@ This is \textbf{architectural validation} in the narrow sense of \S\ref{sec:resu
 
 The \texttt{confidence} and \texttt{completeness} belong to the response contract of \S\ref{sec:bulk-insert-api}, not to an offline report: every record carries its own self-assessment, alongside the \texttt{flags} list recording agreement, grounding and normalization notes and the \texttt{review\_queue} of unfilled mandatory fields. 
 
-
 A low score with a non-empty review queue routes the record to a human reviewer; it is not an error condition. Per-record quality assessment is thus a runtime output of the service rather than something measured about it afterwards — which is a different thing from an aggregate accuracy figure, and does not substitute for one.
-
 
 The service's own mission documentation gives:
 \begin{itemize}
@@ -78,7 +70,6 @@ The service's own mission documentation gives:
 \item \texttt{completeness: 0.75} 
 \end{itemize}
 as example values in a \textbf{sample response}. 
-
 
 These are illustrative: they demonstrate the shape and range of the response schema described in \S\ref{sec:bulk-insert-api}, not an aggregate measurement obtained by running the pipeline over a test corpus. No corpus-level average of either score is reported anywhere in the specification, and this thesis does not construct one.
 

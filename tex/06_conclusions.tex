@@ -10,13 +10,6 @@ This thesis set out to document two systems built at Dometria AI against the two
 
 Against the first problem — turning a heterogeneous document into a structured, comparable asset record — \texttt{dometria-bulk-insert} was built and is described in \S\ref{sec:bulk-insert}. It classifies a document to one of \textbf{97} contract types through a constrained LLM call followed by weighted embedding similarity, generates the corresponding Pydantic schema at runtime from a field tree unioned offline over those contracts, and extracts field values in per-topic groups with self-consistency voting over the mandatory ones. 
 
-\begin{wrapfigure}{r}{0.35\textwidth}
-  \centering
-  \includegraphics[width=\linewidth]{6/Objectives.png}
-\end{wrapfigure}
-
-
-
 Trustworthiness, identified in \S\ref{sec:intro-problems} as the actual difficulty, is addressed structurally rather than by post-hoc checking: every populated field carries a verbatim quote and is rejected without one, every closed vocabulary offers an explicit abstention value, and arithmetic and cross-field values are computed in Python from transcribed primitives rather than requested from the model.
 
 \subsection{Cold start matching}
@@ -59,26 +52,12 @@ In each case the LLM is asked to transcribe and the system decides, rather than 
 
 A second commonality follows from the first. In both systems the schema is data rather than code: the extraction schema is derived from a field tree and a metadata sidecar compiled offline, the conversational schema from \texttt{rules.yaml}, and both are instantiated as Pydantic models at runtime. This is what makes the evidence gate enforceable uniformly — validation is ordinary Python running against a declared model (\S\ref{sec:structured-output}) — and it is also what makes retargeting a configuration change in principle rather than a rewrite.
 
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.5\linewidth]{6/synthesis.png}
-\end{figure}
-
-
 The consequence for evaluation was drawn in \S\ref{sec:results-synthesis} and is worth restating as a conclusion in its own right. \textbf{Both systems place verification inside the pipeline rather than after it}, which is what makes their output defensible by construction: an unsupported value does not reach the record or the graph to begin with. The same choice is why no held-out set exists on which an external harness could be run. The architecture that makes these systems trustworthy in the small is the architecture that leaves them unmeasured in the large.
-
 
 One qualification belongs here rather than in the limitations. The pipeline described above is architectural, not yet wired: the two systems were built as separate services sharing a stack and a method, and ColdRAG currently ingests documents directly rather than consuming the records \texttt{dometria-bulk-insert} produces (\S\ref{sec:coldrag-ingestion}). Joining them is treated in \S\ref{sec:conclusions-future-work}.
 
 \section{Limitations}
 \label{sec:conclusions-limitations}
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.25\linewidth]{6/limitation.jpg}
-\end{figure}
-
 
 \begin{itemize}
   \item \textbf{No accuracy benchmark.} Neither system has been evaluated against a held-out labeled reference — field-level accuracy for extraction, a ranking metric for matching (\S\ref{sec:results-limitations}). Nor has match quality been assessed by domain experts, which for a matching system is the judgment that ultimately matters. The instrumentation that does exist measures self-consistency, vocabulary coverage, latency, and cost, and none of these is a proxy for correctness.
