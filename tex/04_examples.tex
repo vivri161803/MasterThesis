@@ -210,14 +210,190 @@ One mandatory field does not fill. \texttt{villa\_superficie\_terreno\_mq} is de
 \section{Matching: a requirement to a ranking}
 \label{sec:examples-matching}
 
-\todo{query analysis, hop-0, one full hop, blind ranking, perturbed exposure}
+This section traces ColdRAG's retrieval side. The graph is assumed to hold Property~A of \S\ref{sec:examples-sources}, the villa of \S\ref{sec:examples-extraction}, Property~B of \S\ref{sec:examples-e2e} and a small number of comparable assets, each ingested as the product node and leaf entities of \S\ref{sec:coldrag-ingestion}. The query is demand-side, of the kind the conversational module of \S\ref{sec:coldrag-hitl} emits once its mandatory fields validate:
+
+\begin{quote}\small\itshape
+``Famiglia con due figli, cerchiamo un appartamento ampio in zona servita, piano alto, con spazio esterno e portineria.''
+\end{quote}
+
+\subsection{Query analysis and routing}
+
+A single LLM call returns a \texttt{QueryUtente}: a list of key concepts, a boolean \texttt{needs\_reasoning}, and --- computed afterwards in code rather than by the model --- a cumulative embedding, obtained by joining the concepts into one string, encoding it with BGE-M3 and normalising to unit length.
+
+\begin{quote}\small\ttfamily
+concetti\_chiave: ["appartamento ampio", "zona servita", "piano alto",\\
+\phantom{concetti\_chiave: [}"spazio esterno", "portineria", "famiglia con figli"]\\
+needs\_reasoning: true
+\end{quote}
+
+The flag is the hybrid router. It is set to false for a request that names its target directly --- \emph{find the property in via X} --- and true when the answer has to be assembled from properties that are related rather than stated. Here it is true: \emph{zona servita} and \emph{famiglia con due figli} are not attributes of any listing, they are conditions that have to be reached through what a listing is connected to. A user may also force either mode from the interface, which overrides the model's judgement.
+
+It is worth being precise about what the embedding represents. It encodes the concatenated \emph{concepts}, not the user's sentence, so the hop-0 lookup is performed against the model's paraphrase of the request. A concept the extraction step drops is not merely down-weighted at retrieval; it is absent from the vector entirely.
+
+\subsection{Hop 0 and one full hop}
+
+The frontier is the \texttt{COLDRAG\_HOP0\_FRONTIER} (default 5) nearest nodes by cosine similarity in Neo4j's native vector index. These are mostly entity nodes --- \emph{portineria}, \emph{ascensore}, \emph{balcone}, \emph{zona residenziale servita} --- because entities, not products, carry the attribute semantics the query is phrased in. Any product node that happens to land in the frontier is promoted to a candidate immediately at the maximum score of 10, without being scored on any relation.
+
+Each hop expands the frontier by one edge in every direction with a single fan-out Cypher query, then groups the returned edges by relation type before showing them to the model. The compression is textual and its shape matters, because it is what the scorer actually reads:
+
+\begin{quote}\small\ttfamily
+[has\_attribute] PROD\_A3F9C1 → portineria, ascensore, balcone, ripostiglio\\
+\phantom{[has\_attribute] }| PROD\_7B2E44 → portineria, piscina, palestra, terrazzo\\
+{[located\_in]} PROD\_A3F9C1 → Magliana Nuova | PROD\_7B2E44 → Segrate\\
+{[suited\_for]} PROD\_A3F9C1 → famiglia
+\end{quote}
+
+One line per relation type, sources merged, targets listed once. The relation name is stated once instead of once per edge, which is where the reduction claimed in \S\ref{sec:coldrag-inference} comes from: the saving grows with fan-out, so it is largest exactly where the prompt would otherwise be longest.
+
+The model returns one 0--10 score per edge against the user's concepts. Edges at or above $\gamma$ (\texttt{COLDRAG\_SCORE\_THRESHOLD}, default 7.0) survive and their endpoints form the next frontier; the rest are discarded.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llcl}
+\hline
+\textbf{Edge} & \textbf{Relation} & \textbf{Score} & \textbf{Outcome} \\
+\hline
+\texttt{PROD\_A3F9C1} $\to$ portineria & has\_attribute & 9.0 & kept \\
+\texttt{PROD\_A3F9C1} $\to$ balcone & has\_attribute & 8.5 & kept \\
+\texttt{PROD\_A3F9C1} $\to$ famiglia & suited\_for & 8.0 & kept \\
+\texttt{PROD\_A3F9C1} $\to$ ripostiglio & has\_attribute & 5.0 & pruned \\
+\texttt{PROD\_7B2E44} $\to$ piscina & has\_attribute & 6.5 & pruned \\
+\hline
+\end{tabular}
+\caption{Constructed illustration of edge scoring at one hop, at the default $\gamma = 7.0$. The two pruned rows are the interesting ones: a storage cupboard is a real attribute that nothing in the query asked for, and a swimming pool is a strong amenity that is simply not what a family asking for \emph{spazio esterno} and \emph{portineria} requested. Pruning is relevance to this query, not quality of the asset.}
+\label{tab:edge-scoring}
+\end{table}
+
+The loop repeats until \texttt{COLDRAG\_TARGET\_CANDIDATES} (default 20) products have accumulated or \texttt{COLDRAG\_MAX\_HOPS} (default 5) is reached. Two properties of the bookkeeping decide what the ranking sees. Only product nodes become candidates, so \emph{portineria} is traversed and never returned. And a candidate's score is the maximum over the single edges that reached it --- not a product, not an average, and not a function of depth --- so a candidate reached at hop 4 through a chain of edges each scoring 7.5 arrives with the same score as one reached at hop 1 by a single edge scoring 7.5.
+
+\subsection{Blind ranking and what the user is shown}
+
+The top \texttt{COLDRAG\_TOP\_K} (default 5) candidates by score go to a final call, which receives the candidate names, their descriptions and the winning relation for each, and returns an ordering with a written justification per entry:
+
+\begin{quote}\small
+\textbf{1.\ PROD\_A3F9C1} --- ``Soddisfa i tre requisiti espliciti: due spazi esterni distinti, portineria attiva e piano alto in stabile con ascensore. La separazione fra zona giorno e zona notte è coerente con un nucleo familiare.''
+\end{quote}
+
+This is the blind match of \S\ref{sec:blind-matching}: the ranking is justified by relations, and the justification names attributes rather than the asset's identity or address. Numeric metadata is then perturbed on the way out, and only on the way out --- the values used for traversal, scoring and ranking are exact, and the frontend receives:
+
+\begin{quote}\small\ttfamily
+\{"superficie\_mq": 90, "piano": 4\}\ \ $\longrightarrow$\ \ \{"superficie\_mq": 96, "piano": 4\}
+\end{quote}
+
+The perturbation is applied per exposure, with the noise scale set from the magnitude of each value as \S\ref{sec:coldrag-privacy} describes. \S\ref{sec:examples-limits} returns to what that does and does not protect against.
+
 
 \section{End to end: one asset through both systems}
 \label{sec:examples-e2e}
 
-\todo{property B --- extraction to ingestion to retrieval}
+Property~B is a two-room apartment in \emph{Segrate Village}, a gated residential complex outside Milan. Its listing is short and, unlike Property~A, describes a building's shared amenities as much as the unit itself: concierge service all day, pool, gym, playground, extensive grounds. The unit is \emph{già libero} --- vacant --- with a living room and open kitchen giving onto a terrace, one double bedroom, one bathroom, underfloor heating and cooling, dehumidification, triple-glazed wooden frames.
+
+\subsection{Extraction}
+
+Block~2 routes it to \texttt{Immobili residenziali di prestigio > Appartamento}, contract 236, without the contest of \S\ref{sec:examples-contract-a}: nothing in the text competes with \emph{appartamento}. Extraction proceeds as in \S\ref{sec:examples-block3-run} and produces a record whose shape is worth comparing with Property~A's rather than reproducing in full.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{0.30\linewidth}p{0.26\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{Field} & \textbf{Property B} & \textbf{Note} \\
+\hline
+\texttt{..stato\_di\_occupazione} & Libero & stated: ``già libero'' \\
+\texttt{..numero\_camere\_da\_letto} & 1 & ``camera matrimoniale'' \\
+\texttt{apartment\_numero\_bagni} & 1 & ``bagno'' \\
+\texttt{..portineria\_reception} & true & ``portineria attiva tutta la giornata'' \\
+\texttt{..riscaldamento\_tipo} & Pavimento & ``pannelli radianti a pavimento'' \\
+\texttt{apartment\_climatizzazione} & true & same system, stated as ``raffrescamento'' \\
+\texttt{..superficie\_commerciale\_mq} & \emph{null} (mandatory) & no area anywhere in the text \\
+\texttt{..prezzo\_richiesto\_eur} & \emph{null} (mandatory) & no price anywhere in the text \\
+\texttt{address\_line} & \emph{null} (mandatory) & complex named, street not given \\
+\hline
+\end{tabular}
+\caption{Constructed extraction for Property~B. Three mandatory fields are unfillable from the source, so the record leaves the service with completeness $5/8$ and a three-entry review queue --- a \texttt{200} response that is explicitly not a finished record.}
+\label{tab:property-b-record}
+\end{table}
+
+Two points follow from this table, and both are about the document rather than the model. The heating field, which was \texttt{OUT\_OF\_VOCAB} for the villa, resolves cleanly to \texttt{Pavimento} here, because this document happens to describe distribution and the villa's described fuel: the same vocabulary is adequate or inadequate depending on how the author chose to write. And the pool, gym and playground belong to the complex, not the unit; the apartment contract has no field for an amenity of the building, so the most commercially distinctive content of the listing has nowhere to go in the record at all. It survives only as free text --- which is precisely what makes the graph, rather than the record, the thing that can use it.
+
+\subsection{Ingestion into the graph}
+
+ColdRAG ingests the document. The product node's identifier is the SHA-256 of the document text, truncated and prefixed --- \texttt{PROD\_7B2E44...} --- so re-ingesting the same text matches the existing node rather than creating a second one, and re-ingestion updates in place. Change one character of the source and it is a different asset by construction.
+
+The LLM then extracts leaf entities under the closed type vocabulary of \S\ref{sec:coldrag-ingestion}: \emph{Segrate Village} and \emph{Segrate} as \texttt{setting}; \emph{portineria}, \emph{piscina}, \emph{palestra}, \emph{parco giochi}, \emph{terrazzo} and \emph{pannelli radianti a pavimento} as \texttt{feature}; \emph{famiglie con bambini} as \texttt{target\_user} --- the last inferred from the playground rather than stated. Numeric and categorical attributes go into the product's metadata dictionary rather than becoming nodes.
+
+Three ingestion behaviours are visible on this document.
+
+\textbf{A merge that fires.} \emph{portineria} was already in the graph from Property~A. The new entity is embedded, the vector search returns the existing node above the 0.75 floor, and the judge --- seeing two concierge-service entities with near-identical descriptions --- returns \texttt{Merge}. One node now carries edges from both products, which is what later lets a query about concierge service reach both in a single hop. This is the mechanism doing exactly what it exists for: the same real-world attribute, written by two different agencies, becomes one node.
+
+\textbf{A merge that must not fire.} \emph{Segrate Village} and the product node for the apartment inside it are semantically close --- the listing names the complex in its first clause, and their descriptions share most of their content. Embedding similarity alone would be a poor guide here. It never arises: the extraction schema forbids the model from emitting the product as an entity, the product node is created deterministically in code, and the disambiguation routine is applied only to leaf entities. The invariant of \S\ref{sec:coldrag-ingestion} is enforced by construction rather than by a rule that could misfire --- had the two been merged, the complex and one apartment within it would have become the same thing, and every other unit in the complex would have inherited this unit's attributes.
+
+\textbf{A rejection, and an acceptance that is less reassuring.} Governance adjudicates each proposed relation. Suppose extraction proposes \texttt{(PROD\_7B2E44, has\_attribute, giardino privato)} --- a plausible inference from \emph{ampi spazi verdi}, and wrong: the grounds are shared, and the unit's own outdoor space is a terrace. The evidence check has the source text and the claim, the text supports shared greenery while describing the unit's own exterior as a \emph{terrazzo}, the claim is contradicted, and it is rejected. Now suppose extraction proposes \texttt{(PROD\_7B2E44, suited\_for, famiglie con bambini)}. The text never says this. But it is not contradicted either --- there is a playground --- and the judge is instructed to reject only on active contradiction, so it is admitted. Both outcomes follow the stated policy. The second is the cost of that policy: an inference the document does not make enters the graph indistinguishable from a fact it does make, and nothing on the edge records which it was.
+
+Surviving relations are written in one batched transaction, and the entity profiles are saved to the Meta-Knowledge Base, so the next document is disambiguated against a graph that now contains this one.
+
+\subsection{Retrieval}
+
+Property~B is now reachable. A query for a compact, move-in-ready apartment with building amenities near Milan reaches it through the shared \emph{portineria} node and through the amenity entities that the record of Table~\ref{tab:property-b-record} had no field for --- which is the substantive point of carrying both halves. The attributes that could not be stored are the attributes that retrieve the asset.
+
+The route it took, though, is not the one the architecture intends. ColdRAG ingested the listing text directly; it did not consume the audited record produced above. Property~B was therefore read by two independent LLM pipelines whose outputs are nowhere reconciled: the extraction service abstained on three mandatory fields and queued them for review, while the graph holds whatever the ingestion call inferred from the same text, under a governance gate whose disposition is to admit. Nothing propagates the abstention. A field the extraction service was careful enough to refuse can be present in the graph, and a match can be justified on it. \S\ref{sec:conclusions-synthesis} records the two systems as architecturally joined and not yet wired; this is what that gap costs in practice, and \S\ref{sec:conclusions-future-work} treats closing it as the first piece of integration work.
+
 
 \section{Where the approaches fail}
 \label{sec:examples-limits}
 
-\todo{the planted traps, and the five structural limits}
+The examples above show each mechanism working. This section shows the cases where it does not, and the cases where it appears to and does not. Each is reachable from the documents already used, and each is a property of the design rather than a bug that a fix would remove.
+
+\subsection{A near-tie in Block 2 changes the whole record}
+
+\S\ref{sec:examples-contract-a} left the villa's contract decided between two sibling leaves for a document whose first line reads \emph{``Villa / Casolare''}. Had chunk~2 outweighed the other two, the winner would have been \texttt{Casale} and the consequence would not have been a wrong label on a right record. Block~3 extracts the fields the selected contract declares, so a different leaf is a different field set: fields defined for \texttt{Villa} and absent from \texttt{Casale} are never asked for, their values never appear, and nothing downstream registers an omission --- an unasked field is indistinguishable from an absent one.
+
+This is the pipeline's most consequential single failure, and it is structurally invisible. The evidence gate cannot catch it, because every field that \emph{was} extracted is properly quoted and properly entailed; the record is impeccably grounded and incomplete in a way nothing reports. The tie-break --- highest single-chunk similarity --- decides it on a margin of a few hundredths of a cosine score between two labels a fluent reader would call synonyms. \texttt{measure\_variance.py} (\S\ref{sec:results-bulk-insert-tooling}) separates schema-level agreement from field-level drift for exactly this reason, and its schema-level figure is the one that matters here.
+
+\subsection{A grounded value can still be the wrong reading}
+
+Trap~2 of \S\ref{sec:examples-traps} was caught, and it is worth being clear about why, because the reason does not generalise. The judge rejected $(2013$, \emph{``Legge 90 del 2013''}$)$ because a statute is conspicuously not a building. The gate tests entailment between a value and a cited span; it does not test whether the span was the right one to read. When the wrong span is a plausible one, the same machinery passes it.
+
+The villa document supplies the case. It states a price \emph{``ribassato a 520.000 € (dai precedenti 560.000 €)''} --- two figures, one of them superseded. An extractor citing \emph{``560.000 €''} for \texttt{real\_estate\_prezzo\_richiesto\_eur} produces a value that is correctly typed, carries a genuine verbatim quote, and is entailed by that quote: the document does contain that sum as a price for this property. Every gate in \S\ref{sec:examples-gates} passes it. The error is temporal, and neither the validator nor the judge is asked a question that would surface it. Nothing in the pipeline distinguishes the current price from the former one, and the record would show a €40{,}000 overstatement with full provenance.
+
+\subsection{The largest topic group defeats the reason for grouping}
+
+Block~3 partitions fields by topic and issues one extraction call per group, following the finding that decomposing a large schema into smaller ones improves reliability (\S\ref{sec:structured-output}). \S\ref{sec:bulk-insert-topic-consolidation} reports the consolidation that reduced 236 proposed topic names to 64. What the shipped artifacts also show is the shape of the result: \emph{superfici} holds 335 of the 1083 fields, and the assignment is loose enough that \texttt{address\_line} --- a street address --- is grouped under it.
+
+For any product whose field set draws heavily on that cluster, the largest extraction call is back to roughly the size the partitioning was introduced to avoid, and the benefit is forfeited exactly where it was most needed. The mitigation is real and partial: agglomerative clustering removed the pathological 56-member hub that the greedy pass produced, without producing groups of comparable size. The threshold is exposed as \texttt{TOPIC\_CLUSTER\_THRESHOLD} and the sweep in \S\ref{sec:bulk-insert-topic-consolidation} shows the trade it governs, but no setting in that sweep yields balance --- it trades one large cluster against many small ones.
+
+\subsection{A mandatory field that fills itself}
+
+\texttt{real\_estate\_stato\_di\_occupazione} is mandatory, and it is the only field in the entire metadata sidecar that declares a default value. That value is \texttt{Libero}.
+
+The consequence is specific. When the extractor abstains, or when the grounding gate rejects what it produced, the field does not go to the review queue: the default is applied first, precisely so that a defaulted mandatory field satisfies its requirement instead of queuing. The record is flagged \texttt{defaulted}, which is honest provenance and is the right design. But the flag does not enter the arithmetic --- the field counts as filled, completeness rises, and confidence, being the product of grounding pass-rate and completeness, rises with it. A record can therefore report higher confidence because a business rule supplied a value the document never supported.
+
+The value it supplies is not neutral. \emph{Libero} --- vacant possession --- is the commercially favourable state, and whether an asset is tenanted is among the facts a counterparty most needs to be right. The villa of \S\ref{sec:examples-extraction} is a case where the default and the correct answer coincide, so nothing looks wrong; \texttt{ground\_truth.txt} records \texttt{Libero} as an inference from \emph{``subito abitabile''}, and a defaulted record is indistinguishable from an inferred one in the value, differing only in a flag. On a document that is silent about occupancy, the same mechanism asserts vacancy.
+
+\subsection{Edge scores do not compose into a path score}
+
+A candidate's score is the maximum over the individual edges that reached it (\S\ref{sec:coldrag-inference}). Three consequences follow, and the third is the damaging one.
+
+Depth is free: a product found at hop~4 and one found at hop~1 are ranked identically if their best edge scored the same. Corroboration is worthless: a product reached by six independently relevant edges scores exactly what it would have scored reached by the single best of them. And relevance does not have to survive composition. Each edge in a chain is scored against the user's concepts in isolation, so a chain in which every link is individually defensible can terminate at a product that satisfies nothing the user asked for --- \emph{portineria} to a second property sharing it, to that property's neighbourhood, to a third property in the same neighbourhood, every hop above $\gamma$, arriving at an asset whose only connection to the request is transitive. The engine has no notion of a path's aggregate plausibility, and $\gamma$ cannot supply one: raising it prunes weak links but says nothing about how many strong links may be chained.
+
+Because hop-0 products are entered at a score of 10 without being scored on any relation, the top of the ranking is in practice decided by vector similarity and the multi-hop machinery competes for positions beneath it.
+
+\subsection{The privacy layer does not provide the guarantee it names}
+
+\S\ref{sec:coldrag-privacy} states the departure; this is what it costs. Sensitivity is set to ten per cent of the value being released, rather than to $\Delta f$ over neighbouring datasets as Equation~\ref{eq:sensitivity} requires, so the noise scale is a function of the quantity it is hiding. Two things follow.
+
+The released distribution leaks its own centre. A €2{,}000{,}000 asking price is perturbed at scale 200{,}000 and a €200{,}000 one at scale 20{,}000, so the spread of the released value discloses its order of magnitude even where the value itself is obscured --- and in a market where the order of magnitude is most of the sensitive information, that is a substantial disclosure.
+
+Repetition removes the protection entirely. Noise is drawn independently at each exposure, with no budget accounted across queries, so a user who retrieves the same candidate $n$ times sees $n$ independent draws around the true value and recovers it as their mean, with error shrinking as $1/\sqrt{n}$. A handful of repeated queries suffices for a usable estimate. This is the accumulation-over-queries risk that \S\ref{sec:blind-matching} identifies as the reason a formal budget is wanted, and the current layer is the case it was contrasted against: obfuscation per exposure, with nothing bounding the sequence. \S\ref{sec:conclusions-limitations} records the composition gap; the sensitivity rule means the per-exposure guarantee is weaker than the gap alone implies.
+
+\subsection{What the graph never forgets, and what it never resolves}
+
+Two smaller limits complete the picture. Ingestion writes through \texttt{MERGE} and nothing retires what it has written, so an asset that has been sold stays retrievable and stays a candidate; the engine's \texttt{paused\_items} set suppresses a product for one user's session, which is a presentation filter and not a lifecycle. And the disambiguation judge's response model admits three verdicts where the code acts on one: a \texttt{Hierarchy} decision --- \emph{Segrate Village} containing this apartment, say --- is returned and then treated exactly as \texttt{Separate}, so the containment relation the judge identified is discarded rather than written. The graph can represent the relation; the ingestion path has no branch that creates it.
+
+\subsection{What these cases have in common}
+
+Most of the failures above are not failures of the language model. The contract near-tie is an embedding comparison between two labels that are near-synonyms; the superseded price defeats a gate that was never asked about time; the topic hub is a clustering outcome; the default is a line in a YAML file; the path problem is an aggregation rule; the privacy shortfall is a sensitivity constant. The model is the component these mechanisms were built to constrain, and on this evidence they constrain it --- the traps are caught, unquoted values are refused, unsupported claims are rejected at the gate.
+
+The exposure has moved rather than closed. It now sits in the scaffolding: in what the schema chooses to ask, what the judge is asked to check, what a default asserts in silence, and what an aggregation rule treats as equivalent. That is a better place for it, because each of those is inspectable and none of them is stochastic --- every case in this section was found by reading code and artifacts, not by observing a run. It is not the same as an absence of error, and \S\ref{sec:results-limitations} is the statement of how little has been measured about how often any of it occurs.
+
